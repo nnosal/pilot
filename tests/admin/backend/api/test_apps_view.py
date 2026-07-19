@@ -236,6 +236,16 @@ def test_app_updates_skipped_when_update_checks_disabled(tmp_path: Path) -> None
     bench.apps.assert_not_called()
 
 
+def test_fetch_updates_skipped_by_default(tmp_path: Path) -> None:
+    # apps_skip_update_check defaults to on: no task is queued
+    client = _client(tmp_path / "benches" / "current")
+
+    response = client.post("/api/v1/apps/fetch")
+
+    assert response.status_code == 200
+    assert response.get_json() == {"skipped": True}
+
+
 def test_app_update_checks_fetches_each_cloned_app(tmp_path: Path) -> None:
     bench_root = tmp_path / "benches" / "current"
     client = _client(bench_root)

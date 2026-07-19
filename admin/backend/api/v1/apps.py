@@ -7,6 +7,7 @@ from flask import Blueprint, current_app, jsonify, request
 
 from admin.backend.api.responses import accepted_task_response, error_response
 from admin.backend.providers.apps import AppProvider
+from pilot.config import BenchConfig
 from pilot.core.bench import Bench
 from pilot.internal.git import GitRepo
 from pilot.internal.validators import validate_app_name, validate_repo_url
@@ -174,6 +175,8 @@ def remove(name: str):
 @apps_bp.post("/fetch")
 def fetch_updates():
     bench_root = Path(current_app.config["BENCH_ROOT"])
+    if BenchConfig.read(bench_root, validate=False).apps_skip_update_check:
+        return jsonify({"skipped": True})
     try:
         task_id = FetchAppUpdatesTask.queue(Bench(bench_root))
     except Exception:

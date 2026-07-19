@@ -15,7 +15,12 @@ export function useAppUpdates() {
 
     checking.value = true
     try {
-      const { task_id } = await appsApi.fetchUpdates()
+      const response = await appsApi.fetchUpdates()
+      if (response.skipped) {
+        updates.value = {}
+        return
+      }
+      const { task_id } = response
       while (true) {
         await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS))
         const task = await tasksApi.detail(task_id)
