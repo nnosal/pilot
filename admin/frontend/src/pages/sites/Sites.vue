@@ -115,16 +115,31 @@
   </div>
 
   <!-- New Site Button -->
-  <Teleport v-if="!session.readOnly" defer to="#header-actions">
-    <Button variant="solid" @click="showCreate = true">
-      <template #prefix>
-        <span class="size-4 lucide-plus" />
-      </template>
-      New site
-    </Button>
+  <Teleport v-if="!session.readOnly || session.allowMefManagement" defer to="#header-actions">
+    <div class="flex items-center gap-2">
+      <Button v-if="session.allowMefManagement" variant="subtle" @click="showMefProjects = true">
+        <template #prefix>
+          <span class="size-4 lucide-folder-tree" />
+        </template>
+        Projects
+      </Button>
+      <Button v-if="!session.readOnly" variant="solid" @click="showCreate = true">
+        <template #prefix>
+          <span class="size-4 lucide-plus" />
+        </template>
+        New site
+      </Button>
+    </div>
   </Teleport>
 
   <NewSiteDialog v-model="showCreate" :sites="sites" @started="(taskId) => openTaskDetailPage(router, taskId)" />
+
+  <NewProjectDialog v-if="session.allowMefManagement" v-model="showNewProject" @created="onProjectCreated" />
+  <MefProjectsDialog
+    v-if="session.allowMefManagement"
+    v-model="showMefProjects"
+    @new-project="openNewProject"
+  />
 </template>
 
 <script setup>
@@ -143,6 +158,8 @@ import {
   toast,
 } from 'frappe-ui'
 import NewSiteDialog from '@/components/sites/NewSiteDialog.vue'
+import NewProjectDialog from '@/components/mef/NewProjectDialog.vue'
+import MefProjectsDialog from '@/components/mef/MefProjectsDialog.vue'
 import UpdatesAvailableButton from '@/components/common/UpdatesAvailableButton.vue'
 import { useBreadcrumbs } from '@/composables/common/useBreadcrumbs'
 import { useSites } from '@/composables/sites/useSites'
@@ -253,6 +270,20 @@ function siteMenuOptions(site) {
 }
 
 const showCreate = ref(false)
+const showNewProject = ref(false)
+const showMefProjects = ref(false)
+
+// Open the new-project dialog from inside the projects manager.
+function openNewProject() {
+  showMefProjects.value = false
+  showNewProject.value = true
+}
+
+// Once a project creation job has been spawned, surface the projects manager so
+// the operator can watch progress and act on the new entry when it lands.
+function onProjectCreated() {
+  showMefProjects.value = true
+}
 
 onMounted(load)
 </script>

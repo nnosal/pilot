@@ -219,6 +219,25 @@ def test_bootstrap_reports_allow_bench_management_when_disabled(tmp_path: Path) 
     assert app.test_client().get("/api/v1/bootstrap").get_json()["allow_bench_management"] is False
 
 
+def test_bootstrap_reports_allow_mef_management_default_false(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    assert client.get("/api/v1/bootstrap").get_json()["allow_mef_management"] is False
+
+
+def test_bootstrap_reports_allow_mef_management_when_enabled(tmp_path: Path) -> None:
+    from admin.backend.app import create_app
+    bench_root = tmp_path / "benches" / "current"
+    _initialized_bench(bench_root, "secret", "k3y")
+    toml_path = bench_root / "bench.toml"
+    config = BenchConfig.from_file(toml_path)
+    config.admin.allow_mef_management = True
+    config.write(toml_path)
+
+    app = create_app(bench_root)
+    app.config["TESTING"] = True
+    assert app.test_client().get("/api/v1/bootstrap").get_json()["allow_mef_management"] is True
+
+
 def test_login_with_sid_sets_httponly_cookie(tmp_path: Path) -> None:
     client = _client(tmp_path)
     resp = client.post("/api/v1/session", json={"sid": issue_login_token("k3y")})

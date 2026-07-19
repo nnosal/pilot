@@ -496,6 +496,7 @@ class BenchConfig:
             "tls": self.admin.tls,
             "allow_bench_management": self.admin.allow_bench_management,
             "read_only": self.admin.read_only,
+            "allow_mef_management": self.admin.allow_mef_management,
         }
         optional_admin = {
             "jwt_secret": self.admin.jwt_secret,

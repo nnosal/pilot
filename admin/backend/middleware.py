@@ -160,6 +160,10 @@ def _read_only_response(config):
         return None
     if endpoint.split(".", 1)[0] in _READ_ONLY_ALLOWED_BLUEPRINTS:
         return None
+    # mef management operates above the bench, not on it; the mef blueprint's
+    # own gate still refuses when admin.allow_mef_management is false.
+    if endpoint.split(".", 1)[0] == "mef" and config.admin.allow_mef_management:
+        return None
     return error_response(
         "read_only_mode",
         "This admin is read-only: bench and site operations are disabled.",

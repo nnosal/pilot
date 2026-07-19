@@ -24,6 +24,11 @@ class AdminConfig:
     # Refuse destructive bench/site operations (migrate, drop, installs, tasks)
     # while keeping settings, SQL playground and read routes available.
     read_only: bool = False
+    # Expose /api/v1/mef/* (create/delete sibling mef projects under the mef root
+    # that hosts this bench). Off by default; the mef `pilot:admin` daemon-start
+    # task flips this when the admin lives inside a mef project. Gated independently
+    # from read_only so mef management stays callable on a read-only bench.
+    allow_mef_management: bool = False
 
     @classmethod
     def from_dict(cls, data: dict) -> "AdminConfig":
@@ -39,6 +44,7 @@ class AdminConfig:
             tls=data.get("tls", False),
             allow_bench_management=data.get("allow_bench_management", True),
             read_only=data.get("read_only", False),
+            allow_mef_management=data.get("allow_mef_management", False),
         )
 
     @property
