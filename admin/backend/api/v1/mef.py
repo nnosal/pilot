@@ -109,9 +109,27 @@ def _read_project_env(project_dir: Path) -> dict:
             key = key.strip()
             if key in _MEF_ENV_KEYS:
                 values[key] = raw.strip().strip('"').strip("'")
-    except OSError:
+    except (OSError, ValueError):
         return {}
     return values
+
+
+def _iter_mef_projects(mef_root: Path):
+    """Yield mef project directories under ``mef_root``, sorted by name.
+
+    Skips hidden dirs, protected names, and dirs without a ``.miserc.toml``.
+    Shared with the registry blueprint so the filter has one owner.
+    """
+    if not mef_root.is_dir():
+        return
+    for child in sorted(mef_root.iterdir(), key=lambda p: p.name):
+        if not child.is_dir() or child.name.startswith("."):
+            continue
+        if child.name in _PROTECTED_PROJECTS:
+            continue
+        if not (child / ".miserc.toml").is_file():
+            continue
+        yield child
 
 
 @mef_bp.get("/mef/projects")
@@ -121,22 +139,14 @@ def list_projects():
         return gate
 
     mef_root = _mef_root()
-    projects: list[dict] = []
-    if mef_root.is_dir():
-        for child in sorted(mef_root.iterdir(), key=lambda p: p.name):
-            if not child.is_dir() or child.name.startswith("."):
-                continue
-            if child.name in _PROTECTED_PROJECTS:
-                continue
-            if not (child / ".miserc.toml").is_file():
-                continue
-            projects.append(
-                {
-                    "name": child.name,
-                    "is_self": child.name == _host_project_name(),
-                    "env": _read_project_env(child),
-                }
-            )
+    projects = [
+        {
+            "name": child.name,
+            "is_self": child.name == _host_project_name(),
+            "env": _read_project_env(child),
+        }
+        for child in _iter_mef_projects(mef_root)
+    ]
     return jsonify({"projects": projects, "mef_root": str(mef_root)})
 
 
@@ -191,6 +201,53 @@ def delete_project(name: str):
         env_extras={"DELETE_CONFIRM": "1"},
         cwd=_mef_root(),
         label="delete",
+    )
+    return jsonify({"job_id": job_id, "log_url": f"/api/v1/mef/jobs/{job_id}"}), 202
+
+
+@mef_bp.post("/mef/projects/<name>/pilot-up")
+def pilot_up(name: str):
+    """Start the pilot admin daemon for a sibling project.
+
+    ``mise r pilot:up`` is project-scoped (``#MISE dir="{{cwd}}"``), so the
+    subprocess runs inside ``<mef_root>/<name>`` rather than at the mef root.
+    Refuses the host project: re-running pilot:up would rewrite ``bench.toml``
+    and bounce the very admin handling this request.
+    """
+    return _spawn_pilot_control(name, "pilot:up", "pilot-up")
+
+
+@mef_bp.post("/mef/projects/<name>/pilot-down")
+def pilot_down(name: str):
+    """Stop the pilot admin daemon for a sibling project."""
+    return _spawn_pilot_control(name, "pilot:down", "pilot-down")
+
+
+def _spawn_pilot_control(name: str, task: str, label: str):
+    gate = _gate()
+    if gate is not None:
+        return gate
+
+    if not _is_valid_project_name(name):
+        return error_response("invalid_project", f"'{name}' is not a valid project name.", 422)
+    if name in _PROTECTED_PROJECTS:
+        return error_response("invalid_project", f"'{name}' is protected.", 422)
+    if name == _host_project_name():
+        return error_response(
+            "mef_self_pilot_control_forbidden",
+            "Refusing to control the pilot daemon of the project hosting this admin.",
+            409,
+        )
+
+    target = _mef_root() / name
+    if not target.is_dir() or not (target / ".miserc.toml").is_file():
+        return error_response("project_not_found", f"Project '{name}' not found.", 404)
+
+    job_id = _spawn_job(
+        args=_mise_cmd([task]),
+        env_extras={},
+        cwd=target,
+        label=label,
     )
     return jsonify({"job_id": job_id, "log_url": f"/api/v1/mef/jobs/{job_id}"}), 202
 
@@ -297,7 +354,7 @@ def _read_frappe_version(profile_file: Path) -> str:
             if stripped.startswith("FRAPPE_VERSION"):
                 _, _, value = stripped.partition("=")
                 return value.strip().strip('"').strip("'")
-    except OSError:
+    except (OSError, ValueError):
         return ""
     return ""
 

@@ -11,6 +11,11 @@ export const navigation = {
     icon: 'lucide-store',
     component: () => import('./pages/marketplace/Marketplace.vue'),
   },
+  Registry: {
+    path: '/registry',
+    icon: 'lucide-server',
+    component: () => import('./pages/Registry.vue'),
+  },
   Insights: {
     children: {
       Analytics: {

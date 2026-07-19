@@ -3,6 +3,7 @@ import { computed, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { Badge, Breadcrumbs } from 'frappe-ui'
 import AppSidebar from '@/components/common/AppSidebar.vue'
+import ProjectSwitcher from '@/components/mef/ProjectSwitcher.vue'
 import { useBreadcrumbs } from '@/composables/common/useBreadcrumbs'
 import { useIsMobile } from '@/composables/common/useIsMobile'
 import { useSession } from '@/composables/auth/useSession'
@@ -33,7 +34,10 @@ function breadcrumbsFromRouteMeta({ title = '', group }) {
         <Breadcrumbs :items="breadcrumbs" />
         <Badge v-if="session.readOnly" theme="orange" variant="subtle" label="Read-only" />
         <div id="header-badge" class="flex items-center" />
-        <div id="header-actions" class="flex items-center gap-2 ml-auto" />
+        <div class="flex items-center gap-2 ml-auto">
+          <ProjectSwitcher v-if="session.allowMefManagement" />
+          <div id="header-actions" class="flex items-center gap-2" />
+        </div>
       </header>
       <div class="flex-1 p-4 sm:p-6 min-h-0 overflow-auto [scrollbar-gutter:stable]">
         <slot />

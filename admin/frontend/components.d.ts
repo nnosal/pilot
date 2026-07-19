@@ -41,6 +41,7 @@ declare module 'vue' {
     NewSiteDialog: typeof import('./src/components/sites/NewSiteDialog.vue')['default']
     PasswordStrengthMeter: typeof import('./src/components/common/PasswordStrengthMeter.vue')['default']
     PilotLogo: typeof import('./src/components/common/PilotLogo.vue')['default']
+    ProjectSwitcher: typeof import('./src/components/mef/ProjectSwitcher.vue')['default']
     ReconnectOverlay: typeof import('./src/components/common/ReconnectOverlay.vue')['default']
     RemoveDomainDialog: typeof import('./src/components/sites/settings/domains/RemoveDomainDialog.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']

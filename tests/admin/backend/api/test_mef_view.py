@@ -69,6 +69,8 @@ def test_routes_refused_when_allow_mef_management_false(tmp_path: Path) -> None:
         ("get", "/api/v1/mef/projects"),
         ("post", "/api/v1/mef/projects"),
         ("delete", "/api/v1/mef/projects/foo"),
+        ("post", "/api/v1/mef/projects/foo/pilot-up"),
+        ("post", "/api/v1/mef/projects/foo/pilot-down"),
         ("get", "/api/v1/mef/jobs/abc"),
     ):
         response = getattr(client, method)(path)
@@ -308,6 +310,89 @@ def test_delete_spawns_headless_mise_delete_with_confirm(tmp_path: Path) -> None
     assert captured["env"]["NONINTERACTIVE"] == "1"
 
 
+def test_pilot_up_runs_mise_in_project_dir(tmp_path: Path) -> None:
+    bench_root = tmp_path / "host" / "app"
+    mef_root = bench_root.parent.parent
+    (mef_root / "v16-frappe").mkdir()
+    (mef_root / "v16-frappe" / ".miserc.toml").write_text('env = ["v16"]\n')
+
+    _, client = _client(bench_root, allow_mef=True)
+
+    captured: dict = {}
+
+    def fake_popen(args, cwd, env, stdout, stderr, start_new_session):
+        captured["args"] = args
+        captured["cwd"] = cwd
+        captured["env"] = dict(env)
+        return _stub_popen(returncode=0)(args, cwd, env, stdout, stderr, start_new_session)
+
+    with patch("admin.backend.api.v1.mef.subprocess.Popen", side_effect=fake_popen):
+        response = client.post("/api/v1/mef/projects/v16-frappe/pilot-up")
+
+    assert response.status_code == 202
+    assert response.get_json()["job_id"].startswith("pilot-up-")
+    # pilot:up is project-scoped (#MISE dir="{{cwd}}") → cwd must be the project dir.
+    assert captured["cwd"] == str(mef_root / "v16-frappe")
+    assert captured["args"][1:4] == ["r", "pilot:up"]
+    assert captured["env"]["NONINTERACTIVE"] == "1"
+
+
+def test_pilot_down_runs_mise_in_project_dir(tmp_path: Path) -> None:
+    bench_root = tmp_path / "host" / "app"
+    mef_root = bench_root.parent.parent
+    (mef_root / "v16-frappe").mkdir()
+    (mef_root / "v16-frappe" / ".miserc.toml").write_text('env = ["v16"]\n')
+
+    _, client = _client(bench_root, allow_mef=True)
+
+    captured: dict = {}
+
+    def fake_popen(args, cwd, env, stdout, stderr, start_new_session):
+        captured["args"] = args
+        captured["cwd"] = cwd
+        return _stub_popen(returncode=0)(args, cwd, env, stdout, stderr, start_new_session)
+
+    with patch("admin.backend.api.v1.mef.subprocess.Popen", side_effect=fake_popen):
+        response = client.post("/api/v1/mef/projects/v16-frappe/pilot-down")
+
+    assert response.status_code == 202
+    assert response.get_json()["job_id"].startswith("pilot-down-")
+    assert captured["cwd"] == str(mef_root / "v16-frappe")
+    assert captured["args"][1:4] == ["r", "pilot:down"]
+
+
+def test_pilot_control_refuses_self_project(tmp_path: Path) -> None:
+    bench_root = tmp_path / "host" / "app"
+    _, client = _client(bench_root, allow_mef=True)
+
+    for path in ("/pilot-up", "/pilot-down"):
+        response = client.post(f"/api/v1/mef/projects/host{path}")
+        assert response.status_code == 409, path
+        assert (
+            response.get_json()["error"]["code"] == "mef_self_pilot_control_forbidden"
+        ), path
+
+
+def test_pilot_control_404_for_missing_project(tmp_path: Path) -> None:
+    bench_root = tmp_path / "host" / "app"
+    _, client = _client(bench_root, allow_mef=True)
+
+    for path in ("/pilot-up", "/pilot-down"):
+        response = client.post(f"/api/v1/mef/projects/ghost{path}")
+        assert response.status_code == 404, path
+        assert response.get_json()["error"]["code"] == "project_not_found"
+
+
+def test_pilot_control_refuses_protected_names(tmp_path: Path) -> None:
+    bench_root = tmp_path / "host" / "app"
+    _, client = _client(bench_root, allow_mef=True)
+
+    response = client.post("/api/v1/mef/projects/_demo/pilot-up")
+
+    assert response.status_code == 422
+    assert response.get_json()["error"]["code"] == "invalid_project"
+
+
 def test_job_detail_404_for_unknown_id(tmp_path: Path) -> None:
     bench_root = tmp_path / "host" / "app"
     _, client = _client(bench_root, allow_mef=True)
@@ -401,6 +486,8 @@ def test_mef_routes_return_403_read_only_when_disabled(tmp_path: Path) -> None:
     for method, path in (
         ("post", "/api/v1/mef/projects"),
         ("delete", "/api/v1/mef/projects/foo"),
+        ("post", "/api/v1/mef/projects/foo/pilot-up"),
+        ("post", "/api/v1/mef/projects/foo/pilot-down"),
     ):
         response = getattr(client, method)(path)
         assert response.status_code == 403, (method, path)
