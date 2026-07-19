@@ -27,10 +27,13 @@ class TmpEnv:
             raise BenchError("Temporary environment not created yet.")
         return Path(self._dir)
 
-    def create(self, frappe_path: Path) -> "TmpEnv":
+    def create(self, frappe_path: Path, python_path: Path | None = None) -> "TmpEnv":
         self._dir = tempfile.mkdtemp(prefix="pilot-app-validate-")
         try:
-            run_command([self._uv(), "venv", str(self.path)], stream_output=True)
+            venv_args = [self._uv(), "venv", str(self.path)]
+            if python_path:
+                venv_args.extend(["--python", str(python_path)])
+            run_command(venv_args, stream_output=True)
         except CommandError as exc:
             raise AppValidationError(
                 f"Failed to create temporary environment for validation:\n{exc.message}"

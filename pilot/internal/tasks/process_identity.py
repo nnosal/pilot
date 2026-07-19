@@ -12,6 +12,8 @@ _PROC_ROOT = Path("/proc")
 _LAUNCH_ID_ENV = "BENCH_TASK_LAUNCH_ID"
 _CAPTURE_POLL_SECONDS = 0.01
 _CAPTURE_TIMEOUT_SECONDS = 1.0
+# macOS has no procfs; fall back to psutil (an admin extra) for process inspection.
+_HAS_PROC = _PROC_ROOT.exists()
 
 
 class ProcessOwnership(StrEnum):
@@ -171,10 +173,7 @@ class ProcessInspector:
         if identity.boot_id != self._read_boot_id():
             return set()
         owned = set()
-        for entry in _PROC_ROOT.iterdir():
-            if not entry.name.isdigit():
-                continue
-            pid = int(entry.name)
+        for pid in self._iter_pids():
             try:
                 snapshot = self._read_process(pid)
                 if (
@@ -200,11 +199,11 @@ class ProcessInspector:
 
     def _inspect_group(self, identity: ProcessIdentity) -> ProcessOwnership:
         try:
-            entries = list(_PROC_ROOT.iterdir())
+            pids = self._iter_pids()
         except OSError:
             return ProcessOwnership.UNKNOWN
 
-        states = self._inspect_group_states(entries, identity)
+        states = self._inspect_group_states(pids, identity)
         if ProcessOwnership.OWNED in states:
             return ProcessOwnership.OWNED
         if ProcessOwnership.UNKNOWN in states:
@@ -213,14 +212,12 @@ class ProcessInspector:
 
     def _inspect_group_states(
         self,
-        entries: list[Path],
+        pids: list[int],
         identity: ProcessIdentity,
     ) -> list[ProcessOwnership]:
         states = []
-        for entry in entries:
-            if not entry.name.isdigit():
-                continue
-            state = self._inspect_group_entry(int(entry.name), identity)
+        for pid in pids:
+            state = self._inspect_group_entry(pid, identity)
             if state is not None:
                 states.append(state)
         return states
@@ -263,6 +260,8 @@ class ProcessInspector:
             return False, True
 
     def _read_process(self, pid: int) -> _ProcessSnapshot:
+        if not _HAS_PROC:
+            return self._read_process_psutil(pid)
         process_dir = _PROC_ROOT / str(pid)
         stat_text = (process_dir / "stat").read_text(encoding="utf-8")
         fields = stat_text[stat_text.rfind(")") + 2 :].split()
@@ -277,13 +276,74 @@ class ProcessInspector:
             argv_hash=hashlib.sha256((process_dir / "cmdline").read_bytes()).hexdigest(),
         )
 
+    def _read_process_psutil(self, pid: int) -> _ProcessSnapshot:
+        import psutil
+
+        try:
+            process = psutil.Process(pid)
+            with process.oneshot():
+                zombie = process.status() == psutil.STATUS_ZOMBIE
+                uid = process.uids().real
+                start_ticks = int(process.create_time() * 100)
+                try:
+                    # macOS denies cmdline for other users' processes; an empty
+                    # argv keeps the snapshot usable (uid/pgid checks still apply).
+                    argv = [] if zombie else process.cmdline()
+                except psutil.AccessDenied:
+                    argv = []
+        except psutil.NoSuchProcess as error:
+            raise ProcessLookupError(pid) from error
+        except psutil.ZombieProcess:
+            zombie, argv, uid, start_ticks = True, [], os.getuid(), 0
+        except psutil.AccessDenied as error:
+            # Inaccessible means privileged or foreign — never a task wrapper
+            # (task wrappers run as this uid and stay inspectable). Reporting
+            # UNKNOWN here would wedge reconcile() during full-pid group scans.
+            raise ProcessLookupError(pid) from error
+        try:
+            pgid = os.getpgid(pid)
+            sid = os.getsid(pid)
+        except PermissionError as error:
+            raise ProcessLookupError(pid) from error
+        return _ProcessSnapshot(
+            state="Z" if zombie else "S",
+            pgid=pgid,
+            sid=sid,
+            start_ticks=start_ticks,
+            uid=uid,
+            argv_hash=self._argv_hash(argv),
+        )
+
     def _has_launch_id(self, pid: int, launch_id: str) -> bool:
+        if not _HAS_PROC:
+            import psutil
+
+            try:
+                return psutil.Process(pid).environ().get(_LAUNCH_ID_ENV) == launch_id
+            except psutil.NoSuchProcess as error:
+                raise ProcessLookupError(pid) from error
+            except psutil.AccessDenied as error:
+                raise PermissionError(pid) from error
+            except psutil.ZombieProcess:
+                return False
         expected = f"{_LAUNCH_ID_ENV}={launch_id}".encode()
         environment = (_PROC_ROOT / str(pid) / "environ").read_bytes().split(b"\0")
         return expected in environment
 
     @staticmethod
+    def _iter_pids() -> list[int]:
+        if not _HAS_PROC:
+            import psutil
+
+            return psutil.pids()
+        return [int(entry.name) for entry in _PROC_ROOT.iterdir() if entry.name.isdigit()]
+
+    @staticmethod
     def _read_boot_id() -> str:
+        if not _HAS_PROC:
+            import psutil
+
+            return str(int(psutil.boot_time()))
         return _BOOT_ID_PATH.read_text(encoding="utf-8").strip()
 
     @staticmethod

@@ -23,7 +23,7 @@ class ImportCheck:
 
     def run(self, app: "App") -> None:
         try:
-            self.tmp_env.create(app.bench.apps_path / "frappe")
+            self.tmp_env.create(app.bench.apps_path / "frappe", python_path=app.bench.python)
             self.tmp_env.install_app(app, self._dependency_paths(app))
             self._check_imports(app)
         finally:
