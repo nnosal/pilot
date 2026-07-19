@@ -176,7 +176,11 @@ def create_auto_login_token():
     from admin.backend.auth import ensure_jwt_secret, issue_login_token
 
     token = issue_login_token(ensure_jwt_secret(BenchConfig.toml_path(bench_root)))
-    return jsonify({"sid": token})
+    response = jsonify({"sid": token})
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    return response
 
 
 def _validate_login(data: dict, config: BenchConfig):

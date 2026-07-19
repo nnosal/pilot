@@ -106,6 +106,8 @@ async function login() {
       errorMessage.value = apiErrorMessage(result, 'Login failed')
       return
     }
+    // Store password in sessionStorage for cross-project auto-login
+    sessionStorage.setItem('pilot_admin_password', password.value)
     await loadSession()
     router.replace(safeRedirect(route.query.redirect))
   } catch (e) {

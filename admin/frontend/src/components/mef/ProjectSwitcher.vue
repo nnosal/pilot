@@ -18,6 +18,7 @@
 import { computed, onMounted } from 'vue'
 import { Button, Dropdown } from 'frappe-ui'
 import { useRegistry } from '@/composables/mef/useRegistry'
+import { mefApi } from '@/api/mef'
 
 const { projects, loading, load } = useRegistry()
 
@@ -41,17 +42,23 @@ const options = computed(() =>
   })),
 )
 
-function openAdmin(project) {
-  if (!project.pilot_port || project.is_self) return
-  // Cross-origin: the JWT cookie does not carry over, so the new tab lands on
-  // the target admin's login page. Auto-login via /api/v1/auto-login-token is
-  // a future enhancement.
-  // Hardcode http:// for localhost (dev-only) to avoid mixed-content issues.
-  window.open(
-    `http://localhost:${project.pilot_port}`,
-    '_blank',
-    'noopener',
-  )
+async function openAdmin(project) {
+  if (project.is_self) return
+
+  try {
+    if (project.pilot_running) {
+      // Pilot running: open with auto-login using mise r pilot:open
+      await mefApi.pilotOpen(project.name)
+    } else {
+      // Pilot stopped: start it first
+      await mefApi.pilotUp(project.name)
+      // Wait a moment for pilot to start, then open
+      await new Promise(resolve => setTimeout(resolve, 2000))
+      await mefApi.pilotOpen(project.name)
+    }
+  } catch (error) {
+    console.error('Failed to open project admin:', error)
+  }
 }
 
 onMounted(load)

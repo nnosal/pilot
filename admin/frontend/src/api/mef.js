@@ -8,6 +8,10 @@ export const mefApi = {
     request.post(`mef/projects/${encodeURIComponent(name)}/pilot-up`).json(),
   pilotDown: (name) =>
     request.post(`mef/projects/${encodeURIComponent(name)}/pilot-down`).json(),
+  pilotOpen: (name) =>
+    request.post(`mef/projects/${encodeURIComponent(name)}/pilot-open`).json(),
   listRegistry: () => request.get('mef/registry').json(),
   getJob: (jobId) => request.get(`mef/jobs/${encodeURIComponent(jobId)}`).json(),
+  getAutoLoginToken: (name) =>
+    request.post(`mef/projects/${encodeURIComponent(name)}/auto-login-token`).json(),
 }

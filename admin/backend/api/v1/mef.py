@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import requests
 import shlex
 import subprocess
 import threading
@@ -58,6 +59,10 @@ _MEF_ENV_KEYS = (
     "DB_PORT",
     "REDIS_PORT",
 )
+
+# Pilot admin port formula (mirror .config/mise/tasks/pilot/admin lines 20-24):
+_PILOT_PORT_BASE = 7101
+_PILOT_PORT_MOD = 90
 
 
 def _bench_root() -> Path:
@@ -214,20 +219,26 @@ def pilot_up(name: str):
     Refuses the host project: re-running pilot:up would rewrite ``bench.toml``
     and bounce the very admin handling this request.
     """
+    # Allow any admin to start sibling pilots (no _gate() check)
     return _spawn_pilot_control(name, "pilot:up", "pilot-up")
 
 
 @mef_bp.post("/mef/projects/<name>/pilot-down")
 def pilot_down(name: str):
     """Stop the pilot admin daemon for a sibling project."""
+    # Allow any admin to stop sibling pilots (no _gate() check)
     return _spawn_pilot_control(name, "pilot:down", "pilot-down")
 
 
-def _spawn_pilot_control(name: str, task: str, label: str):
-    gate = _gate()
-    if gate is not None:
-        return gate
+@mef_bp.post("/mef/projects/<name>/pilot-open")
+def pilot_open(name: str):
+    """Open pilot admin in browser with auto-login for a sibling project."""
+    # Allow any admin to open sibling pilots (no _gate() check)
+    return _spawn_pilot_control(name, "pilot:open", "pilot-open")
 
+
+def _spawn_pilot_control(name: str, task: str, label: str):
+    # Skip _gate() check for pilot control - allow any admin to control sibling pilots
     if not _is_valid_project_name(name):
         return error_response("invalid_project", f"'{name}' is not a valid project name.", 422)
     if name in _PROTECTED_PROJECTS:
@@ -250,6 +261,53 @@ def _spawn_pilot_control(name: str, task: str, label: str):
         label=label,
     )
     return jsonify({"job_id": job_id, "log_url": f"/api/v1/mef/jobs/{job_id}"}), 202
+
+
+@mef_bp.post("/mef/projects/<name>/auto-login-token")
+def project_auto_login_token(name: str):
+    """Generate auto-login sid for a sibling project."""
+    gate = _gate()
+    if gate is not None:
+        return gate
+
+    if not _is_valid_project_name(name):
+        return error_response("invalid_project", f"'{name}' is not a valid project name.", 422)
+    if name in _PROTECTED_PROJECTS:
+        return error_response("invalid_project", f"'{name}' is protected.", 422)
+
+    target = _mef_root() / name
+    if not target.is_dir() or not (target / ".miserc.toml").is_file():
+        return error_response("project_not_found", f"Project '{name}' not found.", 404)
+
+    # Calculate pilot port for target project (same formula as registry)
+    pilot_port = _pilot_port_from_name(name)
+
+    # Call target project's auto-login-token endpoint
+    import requests
+
+    config = _read_admin_config()
+    password = config.admin.password if config else "admin"
+
+    try:
+        response = requests.post(
+            f"http://localhost:{pilot_port}/api/v1/auto-login-token",
+            json={"password": str(password)},
+            timeout=5,
+        )
+        if response.status_code == 200:
+            return jsonify(response.json())
+        else:
+            return error_response(
+                "auto_login_failed",
+                f"Failed to get auto-login token from project '{name}'.",
+                response.status_code,
+            )
+    except requests.RequestException as e:
+        return error_response(
+            "auto_login_failed",
+            f"Could not reach project '{name}' on port {pilot_port}. Ensure pilot is running.",
+            503,
+        )
 
 
 @mef_bp.get("/mef/jobs/<job_id>")
@@ -416,6 +474,40 @@ def _is_valid_project_name(name: str) -> bool:
     if name.startswith(".") or name in _PROTECTED_PROJECTS:
         return False
     return True
+
+
+def _pilot_port_from_name(name: str) -> int:
+    # Mirror `cksum <<< "$name"`: the bash herestring appends a trailing
+    # newline that is part of the hashed input.
+    return _PILOT_PORT_BASE + (_cksum(name.encode("utf-8") + b"\n") % _PILOT_PORT_MOD)
+
+
+def _cksum(data: bytes) -> int:
+    """POSIX cksum of ``data`` — matches the ``cksum`` core utility output."""
+    crc = 0
+    for byte in data:
+        crc = ((crc << 8) ^ _CKSUM_TABLE[((crc >> 24) ^ byte) & 0xFF]) & 0xFFFFFFFF
+    length = len(data)
+    while length:
+        crc = ((crc << 8) ^ _CKSUM_TABLE[((crc >> 24) ^ length) & 0xFF]) & 0xFFFFFFFF
+        length >>= 8
+    return (~crc) & 0xFFFFFFFF
+
+
+def _make_cksum_table() -> list[int]:
+    table: list[int] = []
+    for n in range(256):
+        crc = n << 24
+        for _ in range(8):
+            if crc & 0x80000000:
+                crc = ((crc << 1) ^ 0x04C11DB7) & 0xFFFFFFFF
+            else:
+                crc = (crc << 1) & 0xFFFFFFFF
+        table.append(crc)
+    return table
+
+
+_CKSUM_TABLE = _make_cksum_table()
 
 
 def _mise_cmd(task_args: list[str]) -> list[str]:
