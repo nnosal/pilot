@@ -151,6 +151,16 @@ const manualBucket = ref(false)
 // Empty listing (provider denies ListBuckets) forces manual entry
 const useManualBucket = computed(() => manualBucket.value || buckets.value.length === 0)
 
+// Snapshot of the saved config (set by load) — the GET bucket listing uses the
+// saved secret, so it is only valid while the form still matches that config
+const savedTarget = ref(null)
+const formMatchesSaved = computed(() => {
+  const saved = savedTarget.value
+  if (!saved || isMinio.value !== saved.isMinio) return false
+  if (isMinio.value) return endpoint.value.trim() === saved.endpoint
+  return provider.value === saved.provider && region.value === saved.region
+})
+
 const connected = computed(() => {
   if (isMinio.value) {
     return Boolean(accessKey.value && bucket.value && endpoint.value && secretKeySet.value)
@@ -225,16 +235,18 @@ watch([accessKey, secretKey, endpoint, isMinio], () => {
 })
 
 async function loadBuckets() {
-  if (!credentialsConfigured.value) {
+  const hasFormCredentials = Boolean(accessKey.value && secretKey.value)
+  // Without form credentials, the GET path lists via the SAVED config — only
+  // valid while the form still targets it (e.g. not after toggling Minio off)
+  if (!hasFormCredentials && !(secretKeySet.value && formMatchesSaved.value)) {
     buckets.value = []
     return
   }
 
   bucketsLoading.value = true
   try {
-    // Unsaved form credentials take priority; fall back to the saved config
     let response
-    if (accessKey.value && secretKey.value) {
+    if (hasFormCredentials) {
       response = await fetch('/api/v1/s3/buckets', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -283,6 +295,12 @@ async function load() {
     endpoint.value = s3.endpoint || ''
     isMinio.value = s3.is_minio || false
     secretKeySet.value = !!s3.secret_key_set
+    savedTarget.value = {
+      isMinio: isMinio.value,
+      endpoint: endpoint.value.trim(),
+      provider: provider.value,
+      region: region.value,
+    }
 
     // Load buckets if credentials are configured
     if (credentialsConfigured.value) {
@@ -457,6 +475,7 @@ async function disconnect() {
       isMinio.value = false
       buckets.value = []
       secretKeySet.value = false
+      savedTarget.value = null
       toast.success('S3 disconnected')
     } else {
       toast.error(apiErrorMessage(result, 'Could not disconnect S3.'))
