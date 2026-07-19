@@ -21,6 +21,9 @@ class AdminConfig:
     domain: str = ""
     tls: bool = False
     allow_bench_management: bool = True
+    # Refuse destructive bench/site operations (migrate, drop, installs, tasks)
+    # while keeping settings, SQL playground and read routes available.
+    read_only: bool = False
 
     @classmethod
     def from_dict(cls, data: dict) -> "AdminConfig":
@@ -35,6 +38,7 @@ class AdminConfig:
             domain=data.get("domain", ""),
             tls=data.get("tls", False),
             allow_bench_management=data.get("allow_bench_management", True),
+            read_only=data.get("read_only", False),
         )
 
     @property

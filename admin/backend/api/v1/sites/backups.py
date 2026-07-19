@@ -129,6 +129,21 @@ def _retention_from_payload(block: dict | None):
     return retention_from_payload(block)
 
 
+def _mef_cron_schedule(bench_root: Path) -> str | None:
+    """Cron expression of a mef-managed backup crontab entry (# mef:<project>)."""
+    import subprocess
+
+    marker = f"# mef:{bench_root.parent.name}"
+    try:
+        output = subprocess.run(["crontab", "-l"], capture_output=True, text=True, timeout=5).stdout
+    except Exception:
+        return None
+    for line in output.splitlines():
+        if line.rstrip().endswith(marker) and not line.lstrip().startswith("#"):
+            return " ".join(line.split()[:5])
+    return None
+
+
 @sites_bp.get("/<name>/backup-schedule")
 @require_scope(site_name)
 def get_backup_schedule(name: str):
@@ -137,6 +152,8 @@ def get_backup_schedule(name: str):
         schedule = Bench(bench_root).site(name).backups.schedule()
     except Exception:
         return internal_error("Could not read the backup schedule.")
+    if mef_expression := _mef_cron_schedule(bench_root):
+        schedule["external"] = {"source": "mef", "expression": mef_expression}
     return jsonify(schedule)
 
 

@@ -8,6 +8,7 @@ const session = reactive({
   enabled: false,
   benchName: '',
   allowBenchManagement: false,
+  readOnly: false,
 })
 
 async function loadSession() {
@@ -21,12 +22,14 @@ async function loadSession() {
     session.enabled = bootstrap.enabled === true
     session.benchName = bootstrap.name || ''
     session.allowBenchManagement = bootstrap.allow_bench_management === true
+    session.readOnly = bootstrap.read_only === true
   } catch {
     session.authenticated = false
     session.wizard = false
     session.enabled = false
     session.benchName = ''
     session.allowBenchManagement = false
+    session.readOnly = false
   }
   session.loaded = true
 }

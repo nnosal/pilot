@@ -27,6 +27,20 @@
         </p>
       </div>
     </div>
+
+    <div v-if="mefRows">
+      <p class="mb-1 font-medium text-ink-gray-5 text-xs uppercase tracking-wide">mef project</p>
+      <div class="divide-y divide-outline-gray-1">
+        <div v-for="(value, label) in mefRows" :key="label" class="flex justify-between items-center py-2.5">
+          <span class="text-ink-gray-7 text-sm">{{ label }}</span>
+          <span class="text-ink-gray-9 text-sm font-mono">{{ value }}</span>
+        </div>
+      </div>
+      <p v-if="info.mef.FRAPPE_OVERLAYS" class="mt-2 p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
+        Overlays are active: app installs, updates and migrate from this UI would overwrite
+        their patches. Use <span class="font-mono">mise r apps:sync</span> from the project folder instead.
+      </p>
+    </div>
   </div>
 </template>
 
@@ -46,6 +60,21 @@ const systemRows = computed(() => {
     RAM: info.value.memory_total ? formatBytes(info.value.memory_total) : '',
     Swap: info.value.swap_total ? formatBytes(info.value.swap_total) : '',
     'Disk size': info.value.disk_total ? formatBytes(info.value.disk_total) : '',
+  }
+  return Object.fromEntries(Object.entries(rows).filter(([, value]) => value))
+})
+
+const mefRows = computed(() => {
+  const mef = info.value.mef
+  if (!mef) return null
+  const rows = {
+    Project: mef.project_dir || '',
+    'DB engine': mef.DB_ENGINE || 'mariadb',
+    Overlays: mef.FRAPPE_OVERLAYS || 'none',
+    'Site domain': mef.SITE_DOMAIN || '',
+    'Web port': mef.WEB_PORT || '',
+    'DB port': mef.DB_PORT || '',
+    'Redis port': mef.REDIS_PORT || '',
   }
   return Object.fromEntries(Object.entries(rows).filter(([, value]) => value))
 })

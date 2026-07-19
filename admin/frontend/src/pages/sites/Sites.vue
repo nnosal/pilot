@@ -115,7 +115,7 @@
   </div>
 
   <!-- New Site Button -->
-  <Teleport defer to="#header-actions">
+  <Teleport v-if="!session.readOnly" defer to="#header-actions">
     <Button variant="solid" @click="showCreate = true">
       <template #prefix>
         <span class="size-4 lucide-plus" />
@@ -130,6 +130,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { useSession } from '@/composables/auth/useSession'
 import {
   Badge,
   Button,
@@ -151,6 +152,7 @@ import { openTaskDetailPage } from '@/utils/taskRoute'
 import { openSiteLogin } from '@/utils/siteLogin'
 
 const router = useRouter()
+const { session } = useSession()
 const { setBreadcrumbs } = useBreadcrumbs()
 const { sites, loading, error, load } = useSites()
 

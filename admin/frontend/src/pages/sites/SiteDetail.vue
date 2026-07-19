@@ -30,7 +30,7 @@
           </div>
         </div>
         <div class="flex items-center gap-2 shrink-0">
-          <Button size="sm" class="hidden sm:flex" @click="goToMarketplace">
+          <Button v-if="!session.readOnly" size="sm" class="hidden sm:flex" @click="goToMarketplace">
             <template #prefix><span class="size-4 lucide-plus" /></template>
             Install app
           </Button>
@@ -69,6 +69,7 @@ import { computed, onMounted, onUnmounted, ref, watch, watchEffect } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Badge, Button, Dropdown, ErrorMessage, LoadingText, TabButtons, toast } from 'frappe-ui'
 import UpdatesAvailableButton from '@/components/common/UpdatesAvailableButton.vue'
+import { useSession } from '@/composables/auth/useSession'
 import SiteApps from '@/components/sites/Apps.vue'
 import SiteBackups from '@/components/sites/Backups.vue'
 import SiteConfig from '@/components/sites/Config.vue'
@@ -150,10 +151,12 @@ async function backupNow() {
   }
 }
 
+const { session } = useSession()
+
 const menuOptions = computed(() => [
-  ...(isMobile.value ? [{ label: 'Install app', icon: 'lucide-plus', onClick: goToMarketplace }] : []),
+  ...(isMobile.value && !session.readOnly ? [{ label: 'Install app', icon: 'lucide-plus', onClick: goToMarketplace }] : []),
   { label: 'Login as admin', icon: 'lucide-log-in', onClick: loginAsAdmin },
-  { label: 'Back up now', icon: 'lucide-archive', onClick: backupNow },
+  ...(session.readOnly ? [] : [{ label: 'Back up now', icon: 'lucide-archive', onClick: backupNow }]),
 ])
 
 // Provisioning is a transient state (a new-site/reinstall task still running);

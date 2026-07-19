@@ -3,7 +3,7 @@
     <SettingsGeneral :site-name="siteName" />
     <SettingsDomains :site-name="siteName" />
     <SettingsActions :site-name="siteName" />
-    <SettingsDanger :site-name="siteName" />
+    <SettingsDanger v-if="!session.readOnly" :site-name="siteName" />
   </div>
 </template>
 
@@ -12,6 +12,9 @@ import SettingsGeneral from './settings/General.vue'
 import SettingsDomains from './settings/Domains.vue'
 import SettingsActions from './settings/Actions.vue'
 import SettingsDanger from './settings/Danger.vue'
+import { useSession } from '@/composables/auth/useSession'
+
+const { session } = useSession()
 
 defineProps({ siteName: { type: String, required: true } })
 </script>

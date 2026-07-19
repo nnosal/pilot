@@ -136,8 +136,35 @@ def _check_auth_request(app: Flask, bench_root):
     if response is not None:
         return response
 
+    response = _read_only_response(config)
+    if response is not None:
+        return response
+
     error = get_authorization_error(g.jwt_claims, view, request.view_args or {})
     return error_response("forbidden", error, 403) if error else None
+
+
+# Blueprints whose mutations stay usable in read-only mode: auth/session (core),
+# SQL playground (databases), settings edits, worker callbacks and update checks.
+_READ_ONLY_ALLOWED_BLUEPRINTS = {"core", "database", "settings", "s3", "task_worker", "updates"}
+_READ_ONLY_ALLOWED_ENDPOINTS = {"apps.fetch_updates"}
+
+
+def _read_only_response(config):
+    if not config.admin.read_only:
+        return None
+    if request.method in ("GET", "HEAD", "OPTIONS"):
+        return None
+    endpoint = request.endpoint or ""
+    if endpoint in _READ_ONLY_ALLOWED_ENDPOINTS:
+        return None
+    if endpoint.split(".", 1)[0] in _READ_ONLY_ALLOWED_BLUEPRINTS:
+        return None
+    return error_response(
+        "read_only_mode",
+        "This admin is read-only: bench and site operations are disabled.",
+        403,
+    )
 
 
 def _auth_config(bench_root, policy: AuthPolicy):

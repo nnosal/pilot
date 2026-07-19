@@ -6,8 +6,8 @@
         <p class="mt-0.5 text-ink-gray-5 text-sm">{{ scheduleSummary }}</p>
       </div>
       <div class="flex items-center gap-2 shrink-0">
-        <Button variant="subtle" size="sm" @click="configRef.open()">{{ enabled ? 'Configure' : 'Enable' }}</Button>
-        <Button size="sm" :loading="backingUp" @click="backupNow">
+        <Button v-if="!mefManaged && !session.readOnly" variant="subtle" size="sm" @click="configRef.open()">{{ enabled ? 'Configure' : 'Enable' }}</Button>
+        <Button v-if="!session.readOnly" size="sm" :loading="backingUp" @click="backupNow">
           <template #prefix><span class="size-4 lucide-archive" /></template>
           Back up now
         </Button>
@@ -87,6 +87,7 @@ import { tasksApi } from '@/api/tasks'
 import { useSite } from '@/composables/sites/useSite'
 import { openTaskDetailPage } from '@/utils/taskRoute'
 import { cronToLabel } from '@/utils/backup'
+import { useSession } from '@/composables/auth/useSession'
 
 const props = defineProps({ siteName: { type: String, required: true } })
 const router = useRouter()
@@ -103,16 +104,21 @@ const footerOptions = computed(() => ({
   pageLengthOptions: [20, 50, 100],
 }))
 
+const { session } = useSession()
 const backingUp = ref(false)
 const error = ref('')
 
 const configRef = ref(null)
 const config = ref(null)
 const enabled = computed(() => !!config.value?.schedule)
+const mefManaged = computed(() => config.value?.external?.source === 'mef')
 
-const scheduleSummary = computed(() =>
-  enabled.value ? `${cronToLabel(config.value.schedule)}.` : 'Manual backups are kept until you delete them.',
-)
+const scheduleSummary = computed(() => {
+  if (mefManaged.value) {
+    return `Managed by mef (${config.value.external.expression}) — change it with mise r backup:schedule.`
+  }
+  return enabled.value ? `${cronToLabel(config.value.schedule)}.` : 'Manual backups are kept until you delete them.'
+})
 
 async function loadConfig() {
   try {

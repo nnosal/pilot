@@ -157,6 +157,32 @@ def get_waf_analytics():
         return error_response("waf_analytics_unavailable", "Could not read WAF analytics.", 500)
 
 
+_MEF_ENV_KEYS = ("PROJECT_NAME", "DB_ENGINE", "FRAPPE_OVERLAYS", "SITE_DOMAIN", "WEB_PORT", "DB_PORT", "REDIS_PORT")
+
+
+def _mef_context(bench_root: Path) -> dict | None:
+    """mef project settings when the bench lives inside a mef project folder."""
+    env_path = bench_root.parent / ".env"
+    if not env_path.is_file():
+        return None
+    values: dict = {}
+    try:
+        for line in env_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, raw = line.partition("=")
+            key = key.strip()
+            if key in _MEF_ENV_KEYS:
+                values[key] = raw.strip().strip('"').strip("'")
+    except OSError:
+        return None
+    if not values:
+        return None
+    values["project_dir"] = bench_root.parent.name
+    return values
+
+
 @stats_bp.get("/system")
 def system_info():
     from admin.backend.providers.os import OSProvider
@@ -175,6 +201,7 @@ def system_info():
             "kernel_version": kernel_version(),
             "os_version": os_version(),
             "runtime": OSProvider(bench_root, config).get_versions(),
+            "mef": _mef_context(bench_root),
         }
     )
 
