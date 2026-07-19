@@ -52,6 +52,12 @@ def execute_query():
     if response is not None:
         return response
 
+    from pilot.config import BenchConfig
+
+    if BenchConfig.read(bench_root, validate=False).admin.read_only:
+        # Admin read-only mode: RW queries are not allowed, whatever the client asked
+        query_data["read_only"] = True
+
     try:
         from pilot.core.database import make_site_database
 
@@ -69,7 +75,11 @@ def execute_query():
         )
     except FileNotFoundError:
         return error_response("site_not_found", "Site was not found.", 404)
-    except Exception:
+    except Exception as exc:
+        from pilot.exceptions import ReadOnlyQueryError
+
+        if isinstance(exc, ReadOnlyQueryError):
+            return error_response("read_only_query", str(exc), 403)
         return error_response("query_failed", "Could not execute query.", 500)
 
 

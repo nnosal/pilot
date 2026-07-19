@@ -63,3 +63,7 @@ class DependencyResolutionError(RegistryError):
 
 class DatabaseError(BenchError):
     """A database server operation failed (connection, provisioning, credentials)."""
+
+
+class ReadOnlyQueryError(DatabaseError):
+    """A mutating SQL statement was submitted to a read-only query session."""

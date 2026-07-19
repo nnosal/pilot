@@ -1,12 +1,14 @@
 <script setup>
 import { computed, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { Breadcrumbs } from 'frappe-ui'
+import { Badge, Breadcrumbs } from 'frappe-ui'
 import AppSidebar from '@/components/common/AppSidebar.vue'
 import { useBreadcrumbs } from '@/composables/common/useBreadcrumbs'
 import { useIsMobile } from '@/composables/common/useIsMobile'
+import { useSession } from '@/composables/auth/useSession'
 
 const route = useRoute()
+const { session } = useSession()
 const { items, resetBreadcrumbs } = useBreadcrumbs()
 const isMobile = useIsMobile()
 
@@ -29,6 +31,7 @@ function breadcrumbsFromRouteMeta({ title = '', group }) {
       <header
         class="top-0 z-10 sticky flex items-center gap-2 px-4 sm:px-6 py-2.5 border-b border-outline-alpha-gray-1 shrink-0">
         <Breadcrumbs :items="breadcrumbs" />
+        <Badge v-if="session.readOnly" theme="orange" variant="subtle" label="Read-only" />
         <div id="header-badge" class="flex items-center" />
         <div id="header-actions" class="flex items-center gap-2 ml-auto" />
       </header>

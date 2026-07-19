@@ -3,9 +3,22 @@ from __future__ import annotations
 import time
 
 from pilot.core.database.base import Database, QueryResult
-from pilot.exceptions import DatabaseError
+from pilot.exceptions import DatabaseError, ReadOnlyQueryError
 
 _MAX_ROWS = 5000
+
+# Transaction-level read-only is not enough on MariaDB: DDL (CREATE/DROP/ALTER)
+# implicitly commits and bypasses it. Gate on the statement's first keyword too.
+_READ_ONLY_KEYWORDS = {"select", "show", "describe", "desc", "explain", "with", "use", "pragma"}
+
+
+def assert_read_only_query(query: str) -> None:
+    import re
+
+    stripped = re.sub(r"^(?:\s+|/\*.*?\*/|--[^\n]*\n?|#[^\n]*\n?)*", "", query, flags=re.S)
+    first = stripped.split(None, 1)[0].lower() if stripped.split() else ""
+    if first.rstrip("(") not in _READ_ONLY_KEYWORDS:
+        raise ReadOnlyQueryError(f"Statement '{first or query[:20]}' is not allowed in read-only mode.")
 
 
 class MariaDB(Database):
@@ -42,6 +55,8 @@ class MariaDB(Database):
     def execute(self, query: str, read_only: bool = True) -> QueryResult:
         import pymysql
 
+        if read_only:
+            assert_read_only_query(query)
         conn = self._connect()
         start = time.monotonic()
         try:
@@ -134,6 +149,8 @@ class PostgreSQL(Database):
         )
 
     def execute(self, query: str, read_only: bool = True) -> QueryResult:
+        if read_only:
+            assert_read_only_query(query)
         conn = self._connect()
         start = time.monotonic()
         try:
@@ -224,6 +241,8 @@ class SQLite(Database):
     def execute(self, query: str, read_only: bool = True) -> QueryResult:
         import sqlite3
 
+        if read_only:
+            assert_read_only_query(query)
         conn = self._connect()
         start = time.monotonic()
         try:
