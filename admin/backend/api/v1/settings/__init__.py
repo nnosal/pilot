@@ -62,6 +62,8 @@ def build_settings_response(config: BenchConfig) -> dict:
             "socketio_port": config.socketio_port,
             "default_branch": config.default_branch,
             "db_type": config.db_type,
+            "apps_skip_validations": config.apps_skip_validations,
+            "apps_skip_update_check": config.apps_skip_update_check,
         },
         "mariadb": {
             "host": config.mariadb.host,
@@ -97,7 +99,11 @@ def build_settings_response(config: BenchConfig) -> dict:
         },
         "admin": {"domain": config.admin.domain, "tls": config.admin.tls},
         "letsencrypt": {"email": config.letsencrypt.email},
-        "s3": s3_payload(config),
+        "s3": {
+            **s3_payload(config),
+            "endpoint": config.s3.endpoint,
+            "is_minio": config.s3.is_minio,
+        },
         "s3_providers": s3_provider_options(),
         "monitor": {
             "system_log_path": str(config.monitor.system_log_path),

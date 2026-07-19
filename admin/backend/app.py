@@ -39,6 +39,7 @@ def register_blueprints(app: Flask) -> None:
     from admin.backend.api.v1.git import git_bp
     from admin.backend.api.v1.logs import logs_bp
     from admin.backend.api.v1.processes import processes_bp
+    from admin.backend.api.v1.s3 import s3_bp
     from admin.backend.api.v1.settings import audit_bp, network_bp, settings_bp
     from admin.backend.api.v1.setup import setup_bp
     from admin.backend.api.v1.sites import sites_bp
@@ -60,6 +61,7 @@ def register_blueprints(app: Flask) -> None:
     app.register_blueprint(tasks_bp, url_prefix=f"{API_V1_PREFIX}/tasks")
     app.register_blueprint(task_worker_bp, url_prefix=API_V1_PREFIX)
     app.register_blueprint(settings_bp, url_prefix=f"{API_V1_PREFIX}/settings")
+    app.register_blueprint(s3_bp, url_prefix=f"{API_V1_PREFIX}/s3")
     app.register_blueprint(audit_bp, url_prefix=API_V1_PREFIX)
     app.register_blueprint(network_bp, url_prefix=API_V1_PREFIX)
     app.register_blueprint(updates_bp, url_prefix=API_V1_PREFIX)

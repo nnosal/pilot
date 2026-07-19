@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
-from typing import ClassVar
+from typing import Annotated, ClassVar
 
+from pilot.commands import Arg
 from pilot.config import AppConfig
 from pilot.core.app import App
 from pilot.core.app.install_result import AppInstallResult
@@ -19,6 +20,7 @@ class GetAndInstallAppTask(Task):
     marketplace_app: str = ""
     site: str = ""
     sites: list[str] = field(default_factory=list)
+    skip_validations: Annotated[bool, Arg(help="Skip app validation checks")] = False
 
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -39,7 +41,11 @@ class GetAndInstallAppTask(Task):
             app = App(AppConfig(name=resolver.app, repo=resolver.repo, branch=resolver.target), self.bench)
         else:
             app = App.from_repo(self.bench, self.repo, self.branch)
-        return app.install(install_dependencies=bool(self.marketplace_app), on_progress=self.report)
+        return app.install(
+            install_dependencies=bool(self.marketplace_app),
+            skip_validations=self.skip_validations or self.bench.config.apps_skip_validations,
+            on_progress=self.report
+        )
 
     def install_on_sites(self, app: App) -> None:
         for site in self.sites:

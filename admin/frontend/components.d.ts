@@ -16,7 +16,7 @@ declare module 'vue' {
     AddAppFromGithubDialog: typeof import('./src/components/apps/AddAppFromGithubDialog.vue')['default']
     AddDomainDialog: typeof import('./src/components/sites/settings/domains/AddDomainDialog.vue')['default']
     AppIcon: typeof import('./src/components/apps/AppIcon.vue')['default']
-    Apps: typeof import('./src/components/sites/Apps.vue')['default']
+    Apps: typeof import('./src/components/settings/Apps.vue')['default']
     AppSidebar: typeof import('./src/components/common/AppSidebar.vue')['default']
     BackupConfigDialog: typeof import('./src/components/sites/BackupConfigDialog.vue')['default']
     Backups: typeof import('./src/components/sites/Backups.vue')['default']

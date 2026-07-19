@@ -190,6 +190,10 @@ def test_marketplace_returns_catalog_apps(tmp_path: Path) -> None:
     assert response.get_json() == [{"app": "suite"}]
 
 
+def _update_checks_enabled() -> Mock:
+    return Mock(read=Mock(return_value=Mock(apps_skip_update_check=False)))
+
+
 def test_app_updates_reads_without_fetching(tmp_path: Path) -> None:
     bench_root = tmp_path / "benches" / "current"
     client = _client(bench_root)
@@ -201,6 +205,7 @@ def test_app_updates_reads_without_fetching(tmp_path: Path) -> None:
     repo = Mock()
 
     with (
+        patch("admin.backend.api.v1.updates.BenchConfig", _update_checks_enabled()),
         patch("admin.backend.api.v1.updates.Bench", return_value=bench),
         patch("admin.backend.api.v1.updates.GitRepo", return_value=repo),
         patch("admin.backend.api.v1.updates._app_info", return_value={"name": "suite"}),
@@ -210,6 +215,25 @@ def test_app_updates_reads_without_fetching(tmp_path: Path) -> None:
     assert response.status_code == 200
     assert response.get_json() == {"apps": [{"name": "suite"}]}
     repo.fetch.assert_not_called()
+
+
+def test_app_updates_skipped_when_update_checks_disabled(tmp_path: Path) -> None:
+    bench_root = tmp_path / "benches" / "current"
+    client = _client(bench_root)
+    bench = Mock()
+
+    with (
+        patch(
+            "admin.backend.api.v1.updates.BenchConfig",
+            Mock(read=Mock(return_value=Mock(apps_skip_update_check=True))),
+        ),
+        patch("admin.backend.api.v1.updates.Bench", return_value=bench),
+    ):
+        response = client.get("/api/v1/app-updates")
+
+    assert response.status_code == 200
+    assert response.get_json() == {"apps": []}
+    bench.apps.assert_not_called()
 
 
 def test_app_update_checks_fetches_each_cloned_app(tmp_path: Path) -> None:
@@ -223,6 +247,7 @@ def test_app_update_checks_fetches_each_cloned_app(tmp_path: Path) -> None:
     repo = Mock()
 
     with (
+        patch("admin.backend.api.v1.updates.BenchConfig", _update_checks_enabled()),
         patch("admin.backend.api.v1.updates.Bench", return_value=bench),
         patch("admin.backend.api.v1.updates.GitRepo", return_value=repo),
         patch("admin.backend.api.v1.updates._app_info", return_value={"name": "suite"}),

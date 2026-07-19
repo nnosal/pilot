@@ -51,7 +51,7 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Button, Dialog, TextInput, ErrorMessage } from 'frappe-ui'
 import LucideLock from '~icons/lucide/lock'
@@ -73,6 +73,28 @@ const isSubmitting = ref(false)
 const showPassword = ref(false)
 const showForgotPassword = ref(false)
 const isMobile = useIsMobile()
+
+onMounted(async () => {
+  const sid = route.query.sid
+  if (sid) {
+    isSubmitting.value = true
+    errorMessage.value = ''
+    try {
+      const result = await authApi.loginWithSid(sid)
+      if (result.authenticated !== true) {
+        errorMessage.value = apiErrorMessage(result, 'Auto-login failed')
+        return
+      }
+      await loadSession()
+      router.replace(safeRedirect(route.query.redirect))
+    } catch (e) {
+      console.error(e)
+      errorMessage.value = 'Invalid or expired sign-in link'
+    } finally {
+      isSubmitting.value = false
+    }
+  }
+})
 
 async function login() {
   if (!password.value) return

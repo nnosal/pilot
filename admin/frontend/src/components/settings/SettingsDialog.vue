@@ -34,6 +34,7 @@
               @click="sshKeysRef?.openAdd()">Add</Button>
           </div>
           <Workers v-if="currentSection === 'workers'" ref="workersRef" />
+          <Apps v-else-if="currentSection === 'apps'" />
           <Firewall v-else-if="currentSection === 'firewall'" />
           <Waf v-else-if="currentSection === 'waf'" />
           <Git v-else-if="currentSection === 'github'" />
@@ -49,6 +50,7 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { Dialog, Button } from 'frappe-ui'
+import Apps from '@/components/settings/Apps.vue'
 import Firewall from '@/components/settings/Firewall.vue'
 import Waf from '@/components/settings/Waf.vue'
 import Git from '@/components/settings/Git.vue'
@@ -63,6 +65,7 @@ const open = defineModel()
 const isMobile = useIsMobile()
 
 const sections = computed(() => [
+  { id: 'apps', label: 'Apps', icon: 'lucide-box' },
   { id: 'github', label: 'Git', icon: 'lucide-git-branch' },
   { id: 'workers', label: 'Workers', icon: 'lucide-server-cog' },
   { id: 's3-bucket', label: 'S3 Bucket', icon: 'lucide-archive' },

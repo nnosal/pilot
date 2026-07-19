@@ -5,6 +5,7 @@ from pathlib import Path
 from flask import Blueprint, current_app, jsonify
 
 from admin.backend.api.responses import error_response
+from pilot.config import BenchConfig
 from pilot.core.bench import Bench
 from pilot.internal.git import GitRepo
 from pilot.utils import cli_root
@@ -30,6 +31,8 @@ def check_app_updates():
 
 def _app_updates(*, fetch: bool) -> list[dict]:
     bench_root = Path(current_app.config["BENCH_ROOT"])
+    if BenchConfig.read(bench_root, validate=False).apps_skip_update_check:
+        return []
     bench = Bench(bench_root)
 
     apps_info = []

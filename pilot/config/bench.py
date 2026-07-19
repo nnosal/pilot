@@ -66,6 +66,8 @@ FLAT_KEYS = {
     "admin_allow_bench_management": "admin.allow_bench_management",
     "letsencrypt_email": "letsencrypt.email",
     "production_process_manager": "production.process_manager",
+    "apps_skip_validations": "apps_skip_validations",
+    "apps_skip_update_check": "apps_skip_update_check",
 }
 
 # Framework branches the setup wizard offers, newest/recommended first.
@@ -120,6 +122,8 @@ class BenchConfig:
     firewall: FirewallConfig = field(default_factory=FirewallConfig)
     waf: WafConfig = field(default_factory=WafConfig)
     s3: S3Config = field(default_factory=S3Config)
+    apps_skip_validations: bool = True
+    apps_skip_update_check: bool = True
 
     # -- construction --
 
@@ -180,6 +184,8 @@ class BenchConfig:
             watch_admin_js=bench_data.get("watch_admin_js", False),
             db_type=bench_data.get("db_type", "mariadb"),
             default_branch=bench_data.get("default_branch", ""),
+            apps_skip_validations=bench_data.get("apps_skip_validations", True),
+            apps_skip_update_check=bench_data.get("apps_skip_update_check", True),
             apps=apps,
             **sections,
         )
@@ -408,6 +414,10 @@ class BenchConfig:
         }
         if self.default_branch:
             bench["default_branch"] = self.default_branch
+        if not self.apps_skip_validations:
+            bench["apps_skip_validations"] = False
+        if not self.apps_skip_update_check:
+            bench["apps_skip_update_check"] = False
         return bench
 
     def _apps_section(self) -> list[ConfigDict]:
@@ -552,6 +562,8 @@ class BenchConfig:
             "bucket": self.s3.bucket,
             "provider": self.s3.provider,
             "region": self.s3.region,
+            "endpoint": self.s3.endpoint,
+            "is_minio": self.s3.is_minio,
         }
 
     def _monitor_section(self) -> ConfigDict:
@@ -789,6 +801,7 @@ _BENCH_KEYS = {
     "watch_admin_js",
     "db_type",
     "default_branch",
+    "apps_skip_validations",
 }
 # Keys older bench-cli versions wrote that the parser still tolerates.
 _PRODUCTION_LEGACY = {"lightweight", "nginx"}

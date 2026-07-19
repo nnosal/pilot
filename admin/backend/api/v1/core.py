@@ -142,6 +142,41 @@ def delete_session():
     return response
 
 
+@core_bp.post("/auto-login-token")
+@allow_unauthenticated
+@rate_limit(10, 60, user_ip=True)
+def create_auto_login_token():
+    """Generate a one-time sid for admin auto-login (similar to bench browse --user)."""
+    bench_root = Path(current_app.config["BENCH_ROOT"])
+    try:
+        config = BenchConfig.read(bench_root)
+    except Exception:
+        return error_response(
+            "configuration_unavailable",
+            "Bench configuration is unavailable.",
+            503,
+        )
+    if not config.admin.password:
+        return error_response(
+            "session_unavailable",
+            "No admin password configured in bench.toml",
+            503,
+        )
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return error_response("malformed_request", "Expected a JSON object.", 400)
+    password = data.get("password")
+    if not password:
+        return error_response("missing_password", "Password is required.", 400)
+    if not hmac.compare_digest(str(password), config.admin.password):
+        return error_response("invalid_credentials", "Incorrect password.", 401)
+
+    from admin.backend.auth import ensure_jwt_secret, issue_login_token
+
+    token = issue_login_token(ensure_jwt_secret(BenchConfig.toml_path(bench_root)))
+    return jsonify({"sid": token})
+
+
 def _validate_login(data: dict, config: BenchConfig):
     sid = data.get("sid")
     if sid is not None:

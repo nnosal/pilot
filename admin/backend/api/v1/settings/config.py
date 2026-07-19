@@ -20,6 +20,7 @@ class ConfigPatcher:
 
     def apply(self) -> str | None:
         self._apply_bench()
+        self._apply_apps()
         self._apply_mariadb()
         self._apply_postgres()
         self._apply_redis()
@@ -46,6 +47,19 @@ class ConfigPatcher:
             self.config.socketio_port = int(bench["socketio_port"])
         if "default_branch" in bench:
             self.config.default_branch = str(bench["default_branch"]).strip()
+        if "apps_skip_validations" in bench:
+            self.config.apps_skip_validations = bool(bench["apps_skip_validations"])
+        if "apps_skip_update_check" in bench:
+            self.config.apps_skip_update_check = bool(bench["apps_skip_update_check"])
+
+    def _apply_apps(self) -> None:
+        apps = self.data.get("apps") or {}
+        if not apps:
+            return
+        if "skip_validations" in apps:
+            self.config.apps_skip_validations = bool(apps["skip_validations"])
+        if "skip_update_check" in apps:
+            self.config.apps_skip_update_check = bool(apps["skip_update_check"])
 
     def _apply_mariadb(self) -> None:
         mariadb = self.data.get("mariadb") or {}
@@ -197,11 +211,15 @@ class ConfigPatcher:
         if not self._s3_has_any_value(s3_config):
             return None
         if not self._s3_is_complete(s3_config):
-            return "s3.access_key, s3.secret_key, s3.bucket, s3.provider, and s3.region are all required."
+            return "s3.access_key, s3.secret_key, s3.bucket are required. Provider/region or endpoint (for Minio) are also required."
         return self._validate_s3_region(s3_config)
 
     @staticmethod
     def _update_s3_config(s3: dict, s3_config: S3Config) -> None:
+        # Read is_minio FIRST so validation can use it
+        if "is_minio" in s3:
+            s3_config.is_minio = bool(s3["is_minio"])
+
         if "access_key" in s3:
             s3_config.access_key = str(s3["access_key"]).strip()
         secret_key = str(s3.get("secret_key", "")).strip()
@@ -213,6 +231,8 @@ class ConfigPatcher:
             s3_config.provider = str(s3["provider"]).strip()
         if "region" in s3:
             s3_config.region = str(s3["region"]).strip()
+        if "endpoint" in s3:
+            s3_config.endpoint = str(s3["endpoint"]).strip()
 
     @staticmethod
     def _s3_has_any_value(s3_config: S3Config) -> bool:
@@ -222,10 +242,18 @@ class ConfigPatcher:
             or s3_config.bucket
             or s3_config.provider
             or s3_config.region
+            or s3_config.endpoint
         )
 
     @staticmethod
     def _s3_is_complete(s3_config: S3Config) -> bool:
+        if s3_config.is_minio:
+            return bool(
+                s3_config.access_key
+                and s3_config.secret_key
+                and s3_config.bucket
+                and s3_config.endpoint
+            )
         return bool(
             s3_config.access_key
             and s3_config.secret_key
@@ -237,6 +265,10 @@ class ConfigPatcher:
     @staticmethod
     def _validate_s3_region(s3_config: S3Config) -> str | None:
         from pilot.integrations.s3.base import SUPPORTED_REGIONS
+
+        # Skip region validation for Minio
+        if s3_config.is_minio:
+            return None
 
         if s3_config.provider not in SUPPORTED_REGIONS:
             return f"s3.provider must be one of: {', '.join(SUPPORTED_REGIONS)}"

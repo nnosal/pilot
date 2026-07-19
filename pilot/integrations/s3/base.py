@@ -38,6 +38,7 @@ PROVIDER_LABELS = {
     "aws": "Amazon S3",
     "digitalocean": "DigitalOcean Spaces",
     "hetzner": "Hetzner Object Storage",
+    "minio": "Minio (S3 Compatible)",
 }
 
 SUPPORTED_REGIONS = {
@@ -56,10 +57,13 @@ SUPPORTED_REGIONS = {
     ],
     "digitalocean": ["nyc3", "sfo3", "sgp1", "ams3", "fra1"],
     "hetzner": ["fsn1", "nbg1", "hel1"],
+    "minio": ["us-east-1"],  # Minio uses default region, but requires a value
 }
 
 
-def build_endpoint_url(provider: str, region: str) -> str:
+def build_endpoint_url(provider: str, region: str, endpoint: str = "") -> str:
+    if provider == "minio" and endpoint:
+        return endpoint
     try:
         return ENDPOINT_TEMPLATES[provider].format(region=region)
     except KeyError as exc:
@@ -78,16 +82,23 @@ class S3:
     provider: str
     bucket_name: str
     endpoint_url: str = field(init=False)
+    custom_endpoint: str = ""
+    is_minio: bool = False
     client: BaseClient = field(init=False)
 
     def __post_init__(self):
         if boto3 is None:
             raise RuntimeError("boto3 is not installed. Run: pip install boto3")
         try:
-            self.endpoint_url = build_endpoint_url(self.provider, self.region_name)
+            if self.is_minio and self.custom_endpoint:
+                self.endpoint_url = self.custom_endpoint
+            else:
+                self.endpoint_url = build_endpoint_url(self.provider, self.region_name)
         except ValueError as error:
             raise S3IntegrationError(str(error)) from error
-        addressing_style = "virtual" if self.provider == "aws" else "path"
+
+        # Minio uses path-style addressing, AWS uses virtual-hosted-style
+        addressing_style = "path" if self.is_minio else ("virtual" if self.provider == "aws" else "path")
 
         self.client = boto3.client(
             "s3",
@@ -106,9 +117,11 @@ class S3:
         client = cls(
             config.access_key,
             config.secret_key,
-            region_name=config.region,
+            region_name=config.region or "us-east-1",  # Minio needs a region
             provider=config.provider,
             bucket_name=config.bucket,
+            custom_endpoint=config.endpoint,
+            is_minio=config.is_minio,
         )
         client.create_bucket_if_not_present(config.bucket)
         return client

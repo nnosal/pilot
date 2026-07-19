@@ -67,21 +67,21 @@ def test_admin_route_inventory_matches_baseline(tmp_path: Path) -> None:
         if rule.rule.startswith(f"{API_ROOT_PREFIX}/") and not rule.rule.startswith(f"{API_V1_PREFIX}/")
     ]
 
-    assert len(routes) == 101
+    assert len(routes) == 106
     assert unversioned == []
-    assert len({(method, path) for method, path, _, _ in routes}) == 101
+    assert len({(method, path) for method, path, _, _ in routes}) == 106
     assert Counter(method for method, _, _, _ in routes) == {
         "DELETE": 10,
-        "GET": 51,
+        "GET": 52,
         "PATCH": 4,
-        "POST": 33,
+        "POST": 37,
         "PUT": 3,
     }
     assert Counter(policy for _, _, _, policy in routes) == {
-        "authenticated": 53,
+        "authenticated": 57,
         "authenticated+bench-management": 9,
         "authenticated+site-scope": 28,
-        "open": 5,
+        "open": 6,
         "setup-conditional": 6,
     }
     assert Counter(areas) == {
@@ -89,6 +89,7 @@ def test_admin_route_inventory_matches_baseline(tmp_path: Path) -> None:
         "app-update-checks": 1,
         "app-updates": 1,
         "audit-events": 1,
+        "auto-login-token": 1,
         "bench-readiness-checks": 1,
         "benches": 8,
         "cli-update-checks": 1,
@@ -102,6 +103,7 @@ def test_admin_route_inventory_matches_baseline(tmp_path: Path) -> None:
         "monitor": 2,
         "network": 1,
         "runtime": 4,
+        "s3": 4,
         "settings": 2,
         "setup": 6,
         "sites": 31,
