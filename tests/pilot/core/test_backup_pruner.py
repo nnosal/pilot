@@ -33,7 +33,7 @@ class _FakeOffsite:
         self.deleted = []
 
     def list_backups(self, site):
-        return {ts: {"database": f"{ts}-db"} for ts in self._runs}
+        return {ts: {"database": {"filename": f"{ts}-db", "size_bytes": None}} for ts in self._runs}
 
     def delete(self, site, timestamp, filename):
         if timestamp in self._fail_on:

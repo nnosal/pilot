@@ -75,8 +75,8 @@ class BackupProvider:
         backups = {}
         for timestamp, files_by_type in offsite.list_backups(self._site_name, limit=limit).items():
             files = [
-                self.get_offsite_file(timestamp, file_type, filename)
-                for file_type, filename in files_by_type.items()
+                self.get_offsite_file(timestamp, file_type, entry)
+                for file_type, entry in files_by_type.items()
             ]
             created_at = self._get_timestamp_or_now(timestamp)
             backups[timestamp] = Backup(timestamp, created_at, files, is_offsite=True)
@@ -115,11 +115,11 @@ class BackupProvider:
             timestamp=timestamp,
         )
 
-    def get_offsite_file(self, timestamp: str, file_type: str, filename: str) -> BackupFile:
+    def get_offsite_file(self, timestamp: str, file_type: str, entry: dict) -> BackupFile:
         return BackupFile(
-            filename=filename,
+            filename=entry["filename"],
             path="",
-            size_bytes=0,
+            size_bytes=entry.get("size_bytes") or 0,
             created_at=self._get_timestamp_or_now(timestamp),
             kind=_OFFSITE_FILE_KINDS.get(file_type, "site_config"),
             timestamp=timestamp,

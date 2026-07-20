@@ -149,7 +149,9 @@ def test_backup_download_links_returns_urls_directly(tmp_path: Path) -> None:
     _make_site(bench_root, "site.localhost")
     client = _client(bench_root)
     offsite = Mock()
-    offsite.get_backup.return_value = {"database": "20240101_000000-database.sql.gz"}
+    offsite.get_backup.return_value = {
+        "database": {"filename": "20240101_000000-database.sql.gz", "size_bytes": 1024}
+    }
     offsite.presigned_url.return_value = "https://bucket.example/signed"
 
     with patch(

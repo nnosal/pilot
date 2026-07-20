@@ -66,6 +66,8 @@ router.beforeEach(async (to) => {
 
 router.afterEach((to) => {
   if (to.name !== 'SiteDetail') {
-    document.title = to.meta?.title ? `${to.meta.title} - Pilot` : 'Pilot'
+    const { session } = useSession()
+    const suffix = session.benchName ? ` (${session.benchName})` : ''
+    document.title = to.meta?.title ? `${to.meta.title} - Pilot${suffix}` : `Pilot${suffix}`
   }
 })

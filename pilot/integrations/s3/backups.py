@@ -16,11 +16,22 @@ FILE_TYPE_SUFFIXES = {
 }
 
 
-def _file_type(filename: str) -> str:
+def file_type_of(filename: str) -> str:
     for suffix, file_type in FILE_TYPE_SUFFIXES.items():
         if filename.endswith(suffix):
             return file_type
     return "unknown"
+
+
+def _normalize_entry(entry: str | dict) -> dict:
+    """Metadata written before size tracking stored a plain filename string."""
+    if isinstance(entry, str):
+        return {"filename": entry, "size_bytes": None}
+    return entry
+
+
+def _normalize_run(run: dict) -> dict:
+    return {file_type: _normalize_entry(entry) for file_type, entry in run.items()}
 
 
 @dataclass(frozen=True)
@@ -51,11 +62,14 @@ class Metadata:
         self.keys = keys
         self.lock = lock
 
-    def add(self, timestamp: str, filename: str) -> None:
+    def add(self, timestamp: str, filename: str, size_bytes: int | None = None) -> None:
         key = self.keys.get_month_key(timestamp)
         with exclusive_file_lock(self.lock):
             runs = self._read_month(key)
-            runs.setdefault(timestamp, {})[_file_type(filename)] = filename
+            runs.setdefault(timestamp, {})[file_type_of(filename)] = {
+                "filename": filename,
+                "size_bytes": size_bytes,
+            }
             self.s3.write_json(self.bucket, key, runs)
 
     def remove(self, timestamp: str, filename: str) -> None:
@@ -65,18 +79,18 @@ class Metadata:
             run = runs.get(timestamp)
             if run is None:
                 return
-            run.pop(_file_type(filename), None)
+            run.pop(file_type_of(filename), None)
             if not run:
                 runs.pop(timestamp)
             self.s3.write_json(self.bucket, key, runs)
 
-    def iter_runs(self) -> Iterator[tuple[str, dict[str, str]]]:
+    def iter_runs(self) -> Iterator[tuple[str, dict[str, dict]]]:
         """Yield (timestamp, files) pairs newest first, one month at a time."""
         month_keys = self.s3.list_objects(self.bucket, prefix=self.keys.month_prefix)
         for key in sorted(month_keys, reverse=True):
             runs = self.s3.read_json(self.bucket, key)
             for timestamp in sorted(runs, reverse=True):
-                yield timestamp, runs[timestamp]
+                yield timestamp, _normalize_run(runs[timestamp])
 
     def _read_month(self, key: str) -> dict[str, dict[str, str]]:
         if not self.s3.has_object(self.bucket, key):
@@ -100,8 +114,9 @@ class OffsiteBackup:
 
     def upload(self, site_name: str, timestamp: str, backup_path: Path, remove_local: bool = True) -> None:
         keys = BackupKeys(site_name)
+        size_bytes = backup_path.stat().st_size
         self.s3.upload_file(self.bucket, backup_path, keys.get_file_key(timestamp, backup_path.name))
-        self._metadata(keys).add(timestamp, backup_path.name)
+        self._metadata(keys).add(timestamp, backup_path.name, size_bytes)
         if remove_local:
             backup_path.unlink(missing_ok=True)
 
@@ -119,19 +134,22 @@ class OffsiteBackup:
         self.s3.delete_object(self.bucket, keys.get_file_key(timestamp, filename))
         self._metadata(keys).remove(timestamp, filename)
 
-    def list_backups(self, site_name: str, limit: int | None = None) -> dict[str, dict[str, str]]:
-        """Return offsite backup runs newest first, keyed by timestamp."""
-        runs: dict[str, dict[str, str]] = {}
+    def list_backups(self, site_name: str, limit: int | None = None) -> dict[str, dict[str, dict]]:
+        """Return offsite backup runs newest first, keyed by timestamp. Each file entry
+        is {"filename": str, "size_bytes": int | None} - size_bytes is None for runs
+        uploaded before size tracking was added."""
+        runs: dict[str, dict[str, dict]] = {}
         for timestamp, files in self._metadata(BackupKeys(site_name)).iter_runs():
             runs[timestamp] = files
             if limit is not None and len(runs) >= limit:
                 break
         return runs
 
-    def get_backup(self, site_name: str, timestamp: str) -> dict[str, str] | None:
+    def get_backup(self, site_name: str, timestamp: str) -> dict[str, dict] | None:
         """Return one offsite backup run from its monthly metadata file."""
         keys = BackupKeys(site_name)
-        return self._metadata(keys)._read_month(keys.get_month_key(timestamp)).get(timestamp)
+        run = self._metadata(keys)._read_month(keys.get_month_key(timestamp)).get(timestamp)
+        return _normalize_run(run) if run is not None else None
 
     def _metadata(self, keys: BackupKeys) -> Metadata:
         return Metadata(self.s3, self.bucket, keys, self.bench_root / ".backup-metadata")

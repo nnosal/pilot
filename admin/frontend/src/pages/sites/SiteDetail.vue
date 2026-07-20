@@ -119,14 +119,20 @@ watch(() => route.params.tab, (tab) => {
 })
 
 const tabLabel = computed(() => tabs.find((t) => t.value === activeTab.value)?.label ?? '')
+const { session } = useSession()
 watchEffect(() => {
-  if (site.value) document.title = `${site.value.name} | ${tabLabel.value}`
+  const suffix = session.benchName ? ` (${session.benchName})` : ''
+  if (site.value) document.title = `${site.value.name} | ${tabLabel.value}${suffix}`
 })
 
 const isMobile = useIsMobile()
 
 function openSite() {
-  window.open(`https://${site.value.name}`, '_blank')
+  toast.promise(login(), {
+    loading: 'Logging in as admin',
+    success: 'Logged in as admin',
+    error: 'Could not log in as admin',
+  })
 }
 
 function goToMarketplace() {
@@ -150,8 +156,6 @@ async function backupNow() {
     toast.error(caught.message || 'Could not start backup')
   }
 }
-
-const { session } = useSession()
 
 const menuOptions = computed(() => [
   ...(isMobile.value && !session.readOnly ? [{ label: 'Install app', icon: 'lucide-plus', onClick: goToMarketplace }] : []),

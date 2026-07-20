@@ -41,6 +41,35 @@ function applyCarriageReturns(raw) {
   return ''
 }
 
+// Line-level heuristics for tools that never emit ANSI when stdout isn't a
+// tty (mise tasks, bench, git …). Order matters: line-anchored rules first,
+// then in-line keyword rules over whatever text remains unwrapped.
+const LINE_RULES = [
+  [/^(\[[\w:.-]+\])/, '#89b4fa;font-weight:600'], // [step:name] marker
+  [/^(\$ )/, '#6c7086'], // shell command echo
+  [/^(- )/, '#89dceb'], // mef task summary line
+  [/^(⚠.*)$/, '#f9e2af'], // warning line
+]
+const KEYWORD_RULES = [
+  [/\b(ERROR|Error|FAILED|Failed)\b/g, '#f38ba8;font-weight:600'],
+  [/\b(SUCCESS|Success)\b/g, '#a6e3a1;font-weight:600'],
+]
+
+function highlightPlainLine(text) {
+  let html = escapeHtml(text)
+  for (const [re, style] of LINE_RULES) {
+    if (re.test(html)) {
+      html = html.replace(re, `<span style="color:${style}">$1</span>`)
+      break
+    }
+  }
+  for (const [re, style] of KEYWORD_RULES) {
+    html = html.replace(re, `<span style="color:${style}">$1</span>`)
+  }
+  return html
+}
+
 export function processLine(raw) {
-  return ansiToHtml(applyCarriageReturns(raw))
+  const resolved = applyCarriageReturns(raw)
+  return resolved.includes('\x1b[') ? ansiToHtml(resolved) : highlightPlainLine(resolved)
 }

@@ -76,8 +76,8 @@ class SiteBackups:
         if not files:
             raise FileNotFoundError(timestamp)
         return {
-            kind: offsite.presigned_url(self.site.config.name, timestamp, filename)
-            for kind, filename in files.items()
+            kind: offsite.presigned_url(self.site.config.name, timestamp, entry["filename"])
+            for kind, entry in files.items()
         }
 
     def schedule(self) -> dict:
@@ -133,9 +133,9 @@ class SiteBackups:
         for file in self.directory.glob(f"{timestamp}-*"):
             file.unlink(missing_ok=True)
 
-    def _delete_offsite(self, offsite: OffsiteBackup, timestamp: str, files: dict[str, str]) -> None:
-        for filename in list(files.values()):
-            offsite.delete(self.site.config.name, timestamp, filename)
+    def _delete_offsite(self, offsite: OffsiteBackup, timestamp: str, files: dict[str, dict]) -> None:
+        for entry in list(files.values()):
+            offsite.delete(self.site.config.name, timestamp, entry["filename"])
 
     def _offsite(self) -> OffsiteBackup | None:
         if not self.site.bench.config.s3.is_configured:

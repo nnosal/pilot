@@ -38,7 +38,6 @@ PROVIDER_LABELS = {
     "aws": "Amazon S3",
     "digitalocean": "DigitalOcean Spaces",
     "hetzner": "Hetzner Object Storage",
-    "minio": "Minio (S3 Compatible)",
 }
 
 SUPPORTED_REGIONS = {
@@ -57,7 +56,6 @@ SUPPORTED_REGIONS = {
     ],
     "digitalocean": ["nyc3", "sfo3", "sgp1", "ams3", "fra1"],
     "hetzner": ["fsn1", "nbg1", "hel1"],
-    "minio": ["us-east-1"],  # Minio uses default region, but requires a value
 }
 
 

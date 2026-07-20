@@ -21,6 +21,7 @@ from pilot.exceptions import BenchError
 from pilot.internal.site_paths import site_exists
 from pilot.internal.validators import validate_cron_expression
 from pilot.tasks.backup_site import BackupSiteTask
+from pilot.tasks.restore_site import RestoreSiteTask
 
 _DEFAULT_BACKUPS_PAGE_SIZE = 20
 
@@ -66,6 +67,33 @@ def get_backup(name: str, timestamp: str):
     if match is None:
         return error_response("backup_not_found", "Backup not found.", 404)
     return jsonify(_backup_set_resource(match))
+
+
+@sites_bp.post("/<name>/backups/<timestamp>/restore")
+@require_scope(site_name)
+def restore_backup(name: str, timestamp: str):
+    from admin.backend.providers.backups import BackupProvider
+
+    bench_root = Path(current_app.config["BENCH_ROOT"])
+    if not site_exists(bench_root, name):
+        return site_not_found()
+    try:
+        sets = BackupProvider(bench_root, name).get_all()
+    except Exception:
+        return internal_error("Could not read site backups.")
+    if not any(s.timestamp == timestamp for s in sets):
+        return error_response("backup_not_found", "Backup not found.", 404)
+    try:
+        task_id = RestoreSiteTask.queue(
+            Bench(bench_root),
+            site=name,
+            timestamp=timestamp,
+            idempotency_key=request.headers.get("Idempotency-Key"),
+            resource_key=f"site:{name.lower()}",
+        )
+    except Exception as error:
+        return task_failure(error)
+    return accepted_task_response(bench_root, task_id)
 
 
 def _backup_set_resource(s) -> dict:

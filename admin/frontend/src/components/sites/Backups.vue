@@ -60,6 +60,21 @@
     </div>
   </div>
 
+  <!-- Restore backup dialog -->
+  <Dialog v-model="showRestore" :options="{ title: 'Restore Backup', size: 'sm' }">
+    <template #body-content>
+      <p class="text-ink-gray-7 text-sm">
+        Restore the site from <strong>{{ restoreTarget ? fmt(restoreTarget.created_at) : '' }}</strong>? This
+        overwrites the current database and files, and cannot be undone.
+      </p>
+      <ErrorMessage v-if="restoreError" :message="restoreError" class="mt-2" />
+      <div class="flex justify-end gap-2 mt-4">
+        <Button variant="ghost" @click="showRestore = false">Cancel</Button>
+        <Button variant="solid" theme="red" :loading="restoring" @click="confirmRestore">Restore</Button>
+      </div>
+    </template>
+  </Dialog>
+
   <!-- Delete backup dialog -->
   <Dialog v-model="showDelete" :options="{ title: 'Delete Backup', size: 'sm' }">
     <template #body-content>
@@ -185,6 +200,7 @@ function menuOptions(set) {
       label, icon: 'lucide-download',
       onClick: () => downloadFile(set, k),
     })),
+    { label: 'Restore backup', icon: 'lucide-history', theme: 'red', onClick: () => { restoreTarget.value = set; showRestore.value = true } },
     { label: 'Delete backup', icon: 'lucide-trash-2', theme: 'red', onClick: () => { deleteTarget.value = set; showDelete.value = true } },
   ]
 }
@@ -212,6 +228,27 @@ async function downloadFile(set, kind) {
     window.open(url, '_blank')
   } catch (e) {
     error.value = e.message || 'Failed to get offsite download link.'
+  }
+}
+
+const showRestore = ref(false)
+const restoreTarget = ref(null)
+const restoring = ref(false)
+const restoreError = ref('')
+
+async function confirmRestore() {
+  restoring.value = true
+  restoreError.value = ''
+  try {
+    const data = await sitesApi.backups.restore(props.siteName, restoreTarget.value.timestamp)
+    if (data.task_id) {
+      showRestore.value = false
+      openTaskDetailPage(router, data.task_id)
+    } else restoreError.value = apiErrorMessage(data, 'Restore failed.')
+  } catch (e) {
+    restoreError.value = e.message || 'Restore failed.'
+  } finally {
+    restoring.value = false
   }
 }
 
