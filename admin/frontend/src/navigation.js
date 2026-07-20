@@ -1,6 +1,11 @@
 // const Placeholder = () => import('./pages/Placeholder.vue')
 
 export const navigation = {
+  Projects: {
+    path: '/projects',
+    icon: 'lucide-folder-tree',
+    component: () => import('./pages/Projects.vue'),
+  },
   Sites: {
     path: '/sites',
     icon: 'lucide-layout-grid',
@@ -10,11 +15,6 @@ export const navigation = {
     path: '/marketplace',
     icon: 'lucide-store',
     component: () => import('./pages/marketplace/Marketplace.vue'),
-  },
-  Registry: {
-    path: '/registry',
-    icon: 'lucide-server',
-    component: () => import('./pages/Registry.vue'),
   },
   Insights: {
     children: {

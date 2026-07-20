@@ -9,6 +9,7 @@ projects lack ``.env``, ``.miserc.toml``, or a bench dir.
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -111,7 +112,7 @@ def test_registry_scans_all_projects_with_metadata(tmp_path: Path) -> None:
     assert v16["profile"] == "v16"
     assert v16["frappe_version"] == "16-hotfix"
     assert v16["db_engine"] == "sqlite"
-    assert v16["ports"] == {"web": 8052, "db": None, "redis": None}
+    assert v16["ports"] == {"web": 8052, "db": None, "redis": None, "mailpit": None}
     assert v16["pilot_port"] == 7152
     assert v16["pilot_running"] is False
     assert v16["sites_count"] == 0
@@ -234,7 +235,7 @@ def test_registry_handles_missing_env_and_missing_bench_dir(tmp_path: Path) -> N
     payload = response.get_json()
     bare = next(p for p in payload["projects"] if p["name"] == "bare")
     assert bare["db_engine"] == ""
-    assert bare["ports"] == {"web": None, "db": None, "redis": None}
+    assert bare["ports"] == {"web": None, "db": None, "redis": None, "mailpit": None}
     assert bare["sites_count"] == 0
     assert bare["apps_count"] == 0
 
@@ -345,3 +346,420 @@ def test_registry_returns_empty_projects_when_mef_root_has_no_siblings(
     names = [p["name"] for p in payload["projects"]]
     # Only the host project (created by _client) shows up.
     assert names == ["host"]
+
+
+# ----- per-service status/control (pilot/app/redis/db) -----
+
+
+def _fake_completed(stdout: str, returncode: int = 0):
+    return MagicMock(stdout=stdout, returncode=returncode)
+
+
+def test_pitchfork_daemon_states_parses_list_output() -> None:
+    from admin.backend.api.v1.registry import _pitchfork_daemon_states
+
+    output = (
+        "devtest/bench           errored  exit code 1\n"
+        "devtest/pilot-admin     running\n"
+        "devtest/redis           running\n"
+        "v16-frappe/bench        running\n"
+    )
+    with (
+        patch("admin.backend.api.v1.registry.shutil.which", return_value="/usr/bin/pitchfork"),
+        patch("admin.backend.api.v1.registry.subprocess.run", return_value=_fake_completed(output)),
+    ):
+        states = _pitchfork_daemon_states()
+
+    assert states == {
+        "devtest": {"bench": "errored", "pilot-admin": "running", "redis": "running"},
+        "v16-frappe": {"bench": "running"},
+    }
+
+
+def test_pitchfork_daemon_states_empty_when_pitchfork_missing() -> None:
+    from admin.backend.api.v1.registry import _pitchfork_daemon_states
+
+    with patch("admin.backend.api.v1.registry.shutil.which", return_value=None):
+        assert _pitchfork_daemon_states() == {}
+
+
+def test_pitchfork_daemon_states_empty_on_timeout() -> None:
+    import subprocess
+
+    from admin.backend.api.v1.registry import _pitchfork_daemon_states
+
+    with (
+        patch("admin.backend.api.v1.registry.shutil.which", return_value="/usr/bin/pitchfork"),
+        patch(
+            "admin.backend.api.v1.registry.subprocess.run",
+            side_effect=subprocess.TimeoutExpired(cmd="pitchfork", timeout=5),
+        ),
+    ):
+        assert _pitchfork_daemon_states() == {}
+
+
+def test_registry_includes_services_from_pitchfork(tmp_path: Path) -> None:
+    bench_root = tmp_path / "host" / "app"
+    mef_root = bench_root.parent.parent
+    _seed_project(mef_root / "v16-frappe", profile="v16")
+
+    _, client = _client(bench_root, allow_mef=True)
+
+    states = {"v16-frappe": {"pilot-admin": "running", "bench": "errored", "redis": "running"}}
+    with (
+        patch("admin.backend.api.v1.registry._ping_pilot_health", return_value=False),
+        patch("admin.backend.api.v1.registry._pitchfork_daemon_states", return_value=states),
+    ):
+        response = client.get("/api/v1/mef/registry")
+
+    payload = response.get_json()
+    v16 = next(p for p in payload["projects"] if p["name"] == "v16-frappe")
+    assert v16["services"] == {
+        "pilot": "running",
+        "app": "errored",
+        "redis": "running",
+        "mailpit": "stopped",
+    }
+
+
+def test_registry_defaults_services_to_stopped_when_untracked(tmp_path: Path) -> None:
+    bench_root = tmp_path / "host" / "app"
+    mef_root = bench_root.parent.parent
+    _seed_project(mef_root / "v16-frappe", profile="v16")
+
+    _, client = _client(bench_root, allow_mef=True)
+
+    with (
+        patch("admin.backend.api.v1.registry._ping_pilot_health", return_value=False),
+        patch("admin.backend.api.v1.registry._pitchfork_daemon_states", return_value={}),
+    ):
+        response = client.get("/api/v1/mef/registry")
+
+    payload = response.get_json()
+    v16 = next(p for p in payload["projects"] if p["name"] == "v16-frappe")
+    assert v16["services"] == {
+        "pilot": "stopped",
+        "app": "stopped",
+        "redis": "stopped",
+        "mailpit": "stopped",
+    }
+
+
+def test_read_db_status_parses_on() -> None:
+    from admin.backend.api.v1.registry import _read_db_status
+
+    with patch(
+        "admin.backend.api.v1.registry.subprocess.run",
+        return_value=_fake_completed("[db:status] $ ...\ntest2 on\n"),
+    ):
+        assert _read_db_status(Path("/tmp/whatever")) == "running"
+
+
+def test_read_db_status_parses_off() -> None:
+    from admin.backend.api.v1.registry import _read_db_status
+
+    with patch(
+        "admin.backend.api.v1.registry.subprocess.run",
+        return_value=_fake_completed("[db:status] $ ...\ntest2 off\n"),
+    ):
+        assert _read_db_status(Path("/tmp/whatever")) == "stopped"
+
+
+def test_read_db_status_unknown_on_timeout() -> None:
+    import subprocess
+
+    from admin.backend.api.v1.registry import _read_db_status
+
+    with patch(
+        "admin.backend.api.v1.registry.subprocess.run",
+        side_effect=subprocess.TimeoutExpired(cmd="mise", timeout=5),
+    ):
+        assert _read_db_status(Path("/tmp/whatever")) == "unknown"
+
+
+def test_project_db_status_refused_when_allow_mef_management_false(tmp_path: Path) -> None:
+    bench_root = tmp_path / "host" / "app"
+    _, client = _client(bench_root, allow_mef=False)
+
+    response = client.get("/api/v1/mef/projects/foo/db-status")
+
+    assert response.status_code == 403
+
+
+def test_project_db_status_404_when_project_missing(tmp_path: Path) -> None:
+    bench_root = tmp_path / "host" / "app"
+    _, client = _client(bench_root, allow_mef=True)
+
+    response = client.get("/api/v1/mef/projects/ghost/db-status")
+
+    assert response.status_code == 404
+
+
+def test_project_db_status_returns_parsed_state(tmp_path: Path) -> None:
+    bench_root = tmp_path / "host" / "app"
+    mef_root = bench_root.parent.parent
+    _seed_project(mef_root / "v16-frappe", profile="v16")
+    _, client = _client(bench_root, allow_mef=True)
+
+    with patch(
+        "admin.backend.api.v1.registry._read_db_status",
+        return_value="running",
+    ):
+        response = client.get("/api/v1/mef/projects/v16-frappe/db-status")
+
+    assert response.status_code == 200
+    assert response.get_json() == {"status": "running"}
+
+
+def test_project_sites_lists_via_site_provider(tmp_path: Path) -> None:
+    bench_root = tmp_path / "host" / "app"
+    mef_root = bench_root.parent.parent
+    _seed_project(mef_root / "v16-frappe", profile="v16")
+    bench = mef_root / "v16-frappe" / "app"
+    (bench / "sites" / "site1").mkdir(parents=True)
+    (bench / "sites" / "site1" / "site_config.json").write_text("{}")
+
+    _, client = _client(bench_root, allow_mef=True)
+    response = client.get("/api/v1/mef/projects/v16-frappe/sites")
+
+    assert response.status_code == 200
+    sites = response.get_json()["sites"]
+    assert [s["name"] for s in sites] == ["site1"]
+    assert sites[0]["exists"] is True
+
+
+def test_project_sites_404_when_project_missing(tmp_path: Path) -> None:
+    bench_root = tmp_path / "host" / "app"
+    _, client = _client(bench_root, allow_mef=True)
+
+    response = client.get("/api/v1/mef/projects/ghost/sites")
+
+    assert response.status_code == 404
+
+
+def test_start_service_refuses_self_pilot(tmp_path: Path) -> None:
+    bench_root = tmp_path / "host" / "app"
+    _, client = _client(bench_root, allow_mef=True)
+
+    response = client.post("/api/v1/mef/projects/host/services/pilot/start")
+
+    assert response.status_code == 409
+
+
+def test_start_service_allows_self_app(tmp_path: Path) -> None:
+    """Only 'pilot' is refused for self — stopping the app/redis/db of the
+    project hosting this admin doesn't kill the admin process itself."""
+    bench_root = tmp_path / "host" / "app"
+    _, client = _client(bench_root, allow_mef=True)
+
+    with patch("admin.backend.api.v1.registry._spawn_job", return_value="app-start-abc123"):
+        response = client.post("/api/v1/mef/projects/host/services/app/start")
+
+    assert response.status_code == 202
+
+
+def test_start_service_rejects_unknown_service(tmp_path: Path) -> None:
+    bench_root = tmp_path / "host" / "app"
+    mef_root = bench_root.parent.parent
+    _seed_project(mef_root / "v16-frappe", profile="v16")
+    _, client = _client(bench_root, allow_mef=True)
+
+    response = client.post("/api/v1/mef/projects/v16-frappe/services/bogus/start")
+
+    assert response.status_code == 422
+
+
+def test_start_service_404_when_project_missing(tmp_path: Path) -> None:
+    bench_root = tmp_path / "host" / "app"
+    _, client = _client(bench_root, allow_mef=True)
+
+    response = client.post("/api/v1/mef/projects/ghost/services/redis/start")
+
+    assert response.status_code == 404
+
+
+def test_stop_service_spawns_pitchfork_command_for_redis(tmp_path: Path) -> None:
+    bench_root = tmp_path / "host" / "app"
+    mef_root = bench_root.parent.parent
+    _seed_project(mef_root / "v16-frappe", profile="v16")
+    _, client = _client(bench_root, allow_mef=True)
+
+    with (
+        patch("admin.backend.api.v1.registry.shutil.which", return_value="/usr/bin/pitchfork"),
+        patch("admin.backend.api.v1.registry._spawn_job", return_value="redis-stop-abc") as spawn,
+    ):
+        response = client.post("/api/v1/mef/projects/v16-frappe/services/redis/stop")
+
+    assert response.status_code == 202
+    assert response.get_json()["job_id"] == "redis-stop-abc"
+    args = spawn.call_args.kwargs["args"]
+    assert args == ["/usr/bin/pitchfork", "stop", "redis"]
+    assert spawn.call_args.kwargs["cwd"] == mef_root / "v16-frappe"
+
+
+def test_start_service_spawns_mise_db_command(tmp_path: Path) -> None:
+    bench_root = tmp_path / "host" / "app"
+    mef_root = bench_root.parent.parent
+    _seed_project(mef_root / "v16-frappe", profile="v16")
+    _, client = _client(bench_root, allow_mef=True)
+
+    with patch("admin.backend.api.v1.registry._spawn_job", return_value="db-start-abc") as spawn:
+        response = client.post("/api/v1/mef/projects/v16-frappe/services/db/start")
+
+    assert response.status_code == 202
+    args = spawn.call_args.kwargs["args"]
+    assert args[-2:] == ["r", "db:start"]
+
+
+# ----- mailpit test send -----
+
+def test_mailpit_test_spawns_bench_execute_sendmail(tmp_path: Path) -> None:
+    bench_root = tmp_path / "host" / "app"
+    mef_root = bench_root.parent.parent
+    _seed_project(mef_root / "v16-frappe", profile="v16")
+    bench = mef_root / "v16-frappe" / "app"
+    (bench / "sites" / "site1").mkdir(parents=True)
+    (bench / "sites" / "site1" / "site_config.json").write_text('{"installed_apps": ["frappe"]}')
+    _, client = _client(bench_root, allow_mef=True)
+
+    with (
+        patch("admin.backend.api.v1.registry.shutil.which", return_value="/usr/bin/bench"),
+        patch("admin.backend.api.v1.registry._spawn_job", return_value="mailpit-test-abc") as spawn,
+    ):
+        response = client.post("/api/v1/mef/projects/v16-frappe/mailpit/test")
+
+    assert response.status_code == 202
+    assert response.get_json()["job_id"] == "mailpit-test-abc"
+    args = spawn.call_args.kwargs["args"]
+    assert args[:4] == ["/usr/bin/bench", "--site", "site1", "execute"]
+    assert args[4] == "frappe.sendmail"
+    assert spawn.call_args.kwargs["cwd"] == bench
+
+
+def test_mailpit_test_404_when_project_missing(tmp_path: Path) -> None:
+    bench_root = tmp_path / "host" / "app"
+    _, client = _client(bench_root, allow_mef=True)
+
+    response = client.post("/api/v1/mef/projects/ghost/mailpit/test")
+
+    assert response.status_code == 404
+
+
+def test_mailpit_test_404_when_no_usable_site(tmp_path: Path) -> None:
+    bench_root = tmp_path / "host" / "app"
+    mef_root = bench_root.parent.parent
+    _seed_project(mef_root / "v16-frappe", profile="v16")
+    (mef_root / "v16-frappe" / "app" / "sites").mkdir(parents=True)
+    _, client = _client(bench_root, allow_mef=True)
+
+    response = client.post("/api/v1/mef/projects/v16-frappe/mailpit/test")
+
+    assert response.status_code == 404
+    assert response.get_json()["error"]["code"] == "no_site"
+
+
+# ----- setup wizard status/trigger (per sibling site) -----
+
+def _seed_site(project_dir: Path, site: str) -> None:
+    site_dir = project_dir / "app" / "sites" / site
+    site_dir.mkdir(parents=True)
+    (site_dir / "site_config.json").write_text('{"installed_apps": ["frappe"]}')
+
+
+def test_site_setup_status_404_when_site_unknown(tmp_path: Path) -> None:
+    bench_root = tmp_path / "host" / "app"
+    mef_root = bench_root.parent.parent
+    _seed_project(mef_root / "v16-frappe", profile="v16")
+    (mef_root / "v16-frappe" / "app" / "sites").mkdir(parents=True)
+    _, client = _client(bench_root, allow_mef=True)
+
+    response = client.get("/api/v1/mef/projects/v16-frappe/sites/ghost.local/setup-status")
+
+    assert response.status_code == 404
+    assert response.get_json()["error"]["code"] == "site_not_found"
+
+
+def test_site_setup_status_parses_bench_execute_output(tmp_path: Path) -> None:
+    bench_root = tmp_path / "host" / "app"
+    mef_root = bench_root.parent.parent
+    _seed_project(mef_root / "v16-frappe", profile="v16")
+    _seed_site(mef_root / "v16-frappe", "site1")
+    _, client = _client(bench_root, allow_mef=True)
+
+    completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="1\n", stderr="")
+    with (
+        patch("admin.backend.api.v1.registry.shutil.which", return_value="/usr/bin/bench"),
+        patch("admin.backend.api.v1.registry.subprocess.run", return_value=completed) as run,
+    ):
+        response = client.get("/api/v1/mef/projects/v16-frappe/sites/site1/setup-status")
+
+    assert response.status_code == 200
+    assert response.get_json()["setup_complete"] is True
+    args = run.call_args.args[0]
+    assert args[:3] == ["/usr/bin/bench", "--site", "site1"]
+
+
+def test_site_setup_status_none_when_bench_execute_fails(tmp_path: Path) -> None:
+    bench_root = tmp_path / "host" / "app"
+    mef_root = bench_root.parent.parent
+    _seed_project(mef_root / "v16-frappe", profile="v16")
+    _seed_site(mef_root / "v16-frappe", "site1")
+    _, client = _client(bench_root, allow_mef=True)
+
+    completed = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="boom")
+    with (
+        patch("admin.backend.api.v1.registry.shutil.which", return_value="/usr/bin/bench"),
+        patch("admin.backend.api.v1.registry.subprocess.run", return_value=completed),
+    ):
+        response = client.get("/api/v1/mef/projects/v16-frappe/sites/site1/setup-status")
+
+    assert response.status_code == 200
+    assert response.get_json()["setup_complete"] is None
+
+
+def test_site_setup_status_404_when_project_missing(tmp_path: Path) -> None:
+    bench_root = tmp_path / "host" / "app"
+    _, client = _client(bench_root, allow_mef=True)
+
+    response = client.get("/api/v1/mef/projects/ghost/sites/site1/setup-status")
+
+    assert response.status_code == 404
+
+
+def test_run_site_wizard_spawns_mise_task_with_site_env(tmp_path: Path) -> None:
+    bench_root = tmp_path / "host" / "app"
+    mef_root = bench_root.parent.parent
+    _seed_project(mef_root / "v16-frappe", profile="v16")
+    _seed_site(mef_root / "v16-frappe", "site1")
+    _, client = _client(bench_root, allow_mef=True)
+
+    with patch("admin.backend.api.v1.registry._spawn_job", return_value="wizard-abc") as spawn:
+        response = client.post("/api/v1/mef/projects/v16-frappe/sites/site1/wizard")
+
+    assert response.status_code == 202
+    assert response.get_json()["job_id"] == "wizard-abc"
+    args = spawn.call_args.kwargs["args"]
+    assert args[-2:] == ["r", "wizard"]
+    assert spawn.call_args.kwargs["cwd"] == mef_root / "v16-frappe"
+    assert spawn.call_args.kwargs["env_extras"] == {"NONINTERACTIVE": "1", "SITE_DOMAIN": "site1"}
+
+
+def test_run_site_wizard_404_when_project_missing(tmp_path: Path) -> None:
+    bench_root = tmp_path / "host" / "app"
+    _, client = _client(bench_root, allow_mef=True)
+
+    response = client.post("/api/v1/mef/projects/ghost/sites/site1/wizard")
+
+    assert response.status_code == 404
+
+
+def test_run_site_wizard_404_when_site_unknown(tmp_path: Path) -> None:
+    bench_root = tmp_path / "host" / "app"
+    mef_root = bench_root.parent.parent
+    _seed_project(mef_root / "v16-frappe", profile="v16")
+    (mef_root / "v16-frappe" / "app" / "sites").mkdir(parents=True)
+    _, client = _client(bench_root, allow_mef=True)
+
+    response = client.post("/api/v1/mef/projects/v16-frappe/sites/ghost.local/wizard")
+
+    assert response.status_code == 404

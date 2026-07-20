@@ -7,10 +7,12 @@
         <div class="flex items-center justify-between gap-2">
           <div class="flex items-center gap-2 text-sm">
             <Badge :theme="statusTheme" :label="statusLabel" />
+            <span v-if="currentStep" class="text-ink-gray-5 font-mono">{{ currentStep }}</span>
             <span class="text-ink-gray-5">exit code: {{ job?.exit_code ?? '—' }}</span>
           </div>
           <Button variant="ghost" size="sm" @click="open = false">Close</Button>
         </div>
+        <ErrorMessage v-if="error" :message="error" />
         <LogView
           :lines="logLines"
           :streaming="job?.status === 'running'"
@@ -71,6 +73,21 @@
           </span>
         </label>
 
+        <!-- Run wizard (needs the bench+site that only setup creates) -->
+        <label
+          class="flex items-center gap-2 select-none"
+          :class="form.new_run_setup ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'"
+        >
+          <Checkbox
+            :model-value="form.new_run_wizard"
+            :disabled="!form.new_run_setup"
+            @update:model-value="form.new_run_wizard = $event"
+          />
+          <span class="text-ink-gray-8 text-sm">
+            Run <code class="font-mono text-ink-gray-7">mise r wizard</code> after creation
+          </span>
+        </label>
+
         <ErrorMessage v-if="error" :message="error" />
 
         <div class="flex justify-end gap-2">
@@ -90,6 +107,7 @@ import { Badge, Button, Checkbox, Dialog, ErrorMessage, FormControl, toast } fro
 import LogView from '@/components/logs/LogView.vue'
 import { apiErrorMessage } from '@/api/client'
 import { mefApi } from '@/api/mef'
+import { processLine } from '@/utils/ansi'
 
 const emit = defineEmits(['created', 'done'])
 const open = defineModel()
@@ -111,6 +129,7 @@ const form = reactive({
   overlays: '',
   apps_preset: '',
   new_run_setup: true,
+  new_run_wizard: false,
 })
 
 const error = ref('')
@@ -118,6 +137,13 @@ const submitting = ref(false)
 const jobId = ref(null)
 const job = ref(null)
 let pollTimer = null
+
+watch(
+  () => form.new_run_setup,
+  (enabled) => {
+    if (!enabled) form.new_run_wizard = false
+  },
+)
 
 const v16Compatible = computed(() => form.profile === 'v16' || form.profile === 'develop')
 const canSubmit = computed(
@@ -129,12 +155,36 @@ const STATUS_META = {
   success: { label: 'Success', theme: 'green' },
   failed: { label: 'Failed', theme: 'red' },
 }
-const statusLabel = computed(() => STATUS_META[job.value?.status]?.label || 'Queued')
-const statusTheme = computed(() => STATUS_META[job.value?.status]?.theme || 'gray')
+// Every mise task pipeline prints "[task] ERROR task failed" on the way out
+// (see .config/mise/tasks/new). When polling loses the job (session expired
+// mid-run, backend restarted) the exit_code is gone, but this marker in the
+// last log we did receive is still a reliable signal that it failed.
+const logIndicatesFailure = computed(() => /\]\s+ERROR task failed\s*$/m.test(job.value?.log || ''))
+const statusLabel = computed(() => {
+  if (STATUS_META[job.value?.status]) return STATUS_META[job.value.status].label
+  if (logIndicatesFailure.value) return 'Failed (from log)'
+  return error.value ? 'Unknown' : 'Queued'
+})
+const statusTheme = computed(() => {
+  if (STATUS_META[job.value?.status]) return STATUS_META[job.value.status].theme
+  return logIndicatesFailure.value ? 'red' : 'gray'
+})
 
 const logLines = computed(() => {
   const text = (job.value?.log || '').replace(/\n+$/, '')
-  return text ? text.split('\n') : []
+  return text ? text.split('\n').map(processLine) : []
+})
+
+// mise tasks consistently prefix their output with "[task:name] ...";
+// surfacing the last one gives a rough "current step" indicator for free.
+const STEP_RE = /^\[([\w:.-]+)\]/gm
+const currentStep = computed(() => {
+  const text = job.value?.log || ''
+  STEP_RE.lastIndex = 0
+  let last = ''
+  let match
+  while ((match = STEP_RE.exec(text))) last = match[1]
+  return last
 })
 
 watch(open, (visible) => {
@@ -148,6 +198,7 @@ watch(open, (visible) => {
       overlays: '',
       apps_preset: '',
       new_run_setup: true,
+      new_run_wizard: false,
     })
     error.value = ''
     submitting.value = false
@@ -169,11 +220,28 @@ function stopPolling() {
 // mise r new takes minutes (clone+install). Poll gently: the log only advances
 // when the subprocess flushes, so 1.5s is responsive without hammering.
 const POLL_INTERVAL_MS = 1500
+// A poll error (session expired mid-job, backend blip) gets a few retries in
+// case it's transient, then surfaces instead of silently going quiet forever.
+const MAX_POLL_ERRORS = 5
+let pollErrorCount = 0
 
 async function pollJob() {
   if (!jobId.value) return
   try {
     const detail = await mefApi.getJob(jobId.value)
+    if (detail?.error) {
+      pollErrorCount += 1
+      if (pollErrorCount <= MAX_POLL_ERRORS) {
+        pollTimer = setTimeout(pollJob, POLL_INTERVAL_MS)
+        return
+      }
+      stopPolling()
+      error.value = logIndicatesFailure.value
+        ? `${apiErrorMessage(detail, 'Lost track of the job.')} The log shows it already failed — see below.`
+        : `${apiErrorMessage(detail, 'Lost track of the job.')} Reload the page — the operation may still be running in the background.`
+      return
+    }
+    pollErrorCount = 0
     job.value = detail
     if (detail.status === 'running') {
       pollTimer = setTimeout(pollJob, POLL_INTERVAL_MS)
@@ -205,7 +273,10 @@ function buildPayload() {
   if (overlays.length) payload.overlays = overlays
   const apps = form.apps_preset.split(',').map((s) => s.trim()).filter(Boolean)
   if (apps.length) payload.apps_preset = apps.join(',')
-  if (form.new_run_setup) payload.new_run_setup = 1
+  if (form.new_run_setup) {
+    payload.new_run_setup = 1
+    if (form.new_run_wizard) payload.new_run_wizard = 1
+  }
   return payload
 }
 
@@ -220,6 +291,7 @@ async function submit() {
       return
     }
     jobId.value = result.job_id
+    pollErrorCount = 0
     // Wait for backend to create log file and start subprocess before first poll
     setTimeout(pollJob, 500)
   } catch (caught) {

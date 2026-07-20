@@ -35,7 +35,7 @@
       <div v-if="view === 'grid'" class="gap-3 grid grid-cols-1 md:grid-cols-2">
         <!-- Site Card -->
         <div v-for="site in filteredSites" :key="site.name"
-          class="flex items-center gap-3 bg-surface-elevation-1 hover:bg-surface-gray-1 p-2 sm:p-4 border rounded-xl border-outline-gray-2 hover:border-outline-gray-3 transition-colors">
+          class="flex flex-col gap-2 bg-surface-elevation-1 hover:bg-surface-gray-1 p-2 sm:p-4 border rounded-xl border-outline-gray-2 hover:border-outline-gray-3 transition-colors">
           <RouterLink :to="{ name: 'SiteDetail', params: { name: site.name } }"
             class="flex flex-1 items-center gap-3 min-w-0 no-underline">
             <!-- Icon -->
@@ -74,6 +74,24 @@
               </p>
             </div>
           </RouterLink>
+
+          <!-- Setup wizard not completed yet -->
+          <div
+            v-if="setupStatus[site.name] === false"
+            class="flex items-center gap-2 bg-surface-amber-2 px-2.5 py-1.5 rounded border border-outline-amber-3"
+          >
+            <span class="size-4 text-ink-amber-8 lucide-triangle-alert shrink-0" />
+            <span class="text-ink-amber-9 text-xs">Setup wizard not completed yet.</span>
+            <Button
+              variant="solid"
+              size="sm"
+              class="ml-auto"
+              :loading="wizardLoading === site.name"
+              @click="runWizard(site)"
+            >
+              Run wizard
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -115,15 +133,9 @@
   </div>
 
   <!-- New Site Button -->
-  <Teleport v-if="!session.readOnly || session.allowMefManagement" defer to="#header-actions">
+  <Teleport v-if="!session.readOnly" defer to="#header-actions">
     <div class="flex items-center gap-2">
-      <Button v-if="session.allowMefManagement" variant="subtle" @click="showMefProjects = true">
-        <template #prefix>
-          <span class="size-4 lucide-folder-tree" />
-        </template>
-        Projects
-      </Button>
-      <Button v-if="!session.readOnly" variant="solid" @click="showCreate = true">
+      <Button variant="solid" @click="showCreate = true">
         <template #prefix>
           <span class="size-4 lucide-plus" />
         </template>
@@ -133,13 +145,6 @@
   </Teleport>
 
   <NewSiteDialog v-model="showCreate" :sites="sites" @started="(taskId) => openTaskDetailPage(router, taskId)" />
-
-  <NewProjectDialog v-if="session.allowMefManagement" v-model="showNewProject" @created="onProjectCreated" />
-  <MefProjectsDialog
-    v-if="session.allowMefManagement"
-    v-model="showMefProjects"
-    @new-project="openNewProject"
-  />
 </template>
 
 <script setup>
@@ -158,15 +163,15 @@ import {
   toast,
 } from 'frappe-ui'
 import NewSiteDialog from '@/components/sites/NewSiteDialog.vue'
-import NewProjectDialog from '@/components/mef/NewProjectDialog.vue'
-import MefProjectsDialog from '@/components/mef/MefProjectsDialog.vue'
 import UpdatesAvailableButton from '@/components/common/UpdatesAvailableButton.vue'
 import { useBreadcrumbs } from '@/composables/common/useBreadcrumbs'
 import { useSites } from '@/composables/sites/useSites'
 import { apiErrorMessage } from '@/api/client'
+import { mefApi } from '@/api/mef'
 import { sitesApi } from '@/api/sites'
 import { openTaskDetailPage } from '@/utils/taskRoute'
 import { openSiteLogin } from '@/utils/siteLogin'
+import { siteStatus, siteStatusLabel, siteStatusTheme } from '@/utils/siteStatus'
 
 const router = useRouter()
 const { session } = useSession()
@@ -184,13 +189,6 @@ const viewOptions = [
   { value: 'list', icon: 'lucide-list' },
 ]
 
-const SITE_STATUS = {
-  online: { label: 'Active', theme: 'green' },
-  broken: { label: 'Broken', theme: 'red' },
-  offline: { label: 'Paused', theme: 'orange' },
-  provisioning: { label: 'Creating', theme: 'blue' },
-}
-
 const statusOptions = [
   { label: 'Status', value: 'all' },
   { label: 'Active', value: 'online' },
@@ -199,17 +197,8 @@ const statusOptions = [
   { label: 'Creating', value: 'provisioning' },
 ]
 
-function siteStatus(site) {
-  // Provisioning wins over "offline": the site dir/site_config.json may not
-  // exist yet in the earliest moments of a new-site/reinstall task.
-  if (site.provisioning) return 'provisioning'
-  if (!site.exists) return 'offline'
-  if (site.broken) return 'broken'
-  return 'online'
-}
-
-const statusLabel = (site) => SITE_STATUS[siteStatus(site)].label
-const statusTheme = (site) => SITE_STATUS[siteStatus(site)].theme
+const statusLabel = siteStatusLabel
+const statusTheme = siteStatusTheme
 
 function appsLabel(site) {
   const count = site.installed_apps?.length || 0
@@ -270,20 +259,65 @@ function siteMenuOptions(site) {
 }
 
 const showCreate = ref(false)
-const showNewProject = ref(false)
-const showMefProjects = ref(false)
 
-// Open the new-project dialog from inside the projects manager.
-function openNewProject() {
-  showMefProjects.value = false
-  showNewProject.value = true
+// ----- setup wizard status/trigger, fetched once per site after the list loads -----
+const setupStatus = ref({})
+const wizardLoading = ref('')
+const WIZARD_POLL_MS = 1500
+
+async function loadSetupStatus() {
+  const results = await Promise.all(
+    sites.value.map((site) => sitesApi.getSetupStatus(site.name).catch(() => null)),
+  )
+  setupStatus.value = Object.fromEntries(
+    sites.value.map((site, i) => [site.name, results[i]?.setup_complete ?? null]),
+  )
 }
 
-// Once a project creation job has been spawned, surface the projects manager so
-// the operator can watch progress and act on the new entry when it lands.
-function onProjectCreated() {
-  showMefProjects.value = true
+async function runWizard(site) {
+  wizardLoading.value = site.name
+  try {
+    const result = await sitesApi.runWizard(site.name)
+    if (!result.job_id) {
+      toast.error(apiErrorMessage(result, 'Could not start the setup wizard.'))
+      wizardLoading.value = ''
+      return
+    }
+    pollWizardJob(result.job_id, site.name)
+  } catch (caught) {
+    toast.error(caught.message || 'Could not start the setup wizard.')
+    wizardLoading.value = ''
+  }
 }
 
-onMounted(load)
+async function pollWizardJob(jobId, siteName) {
+  let detail
+  try {
+    detail = await mefApi.getJob(jobId)
+  } catch {
+    setTimeout(() => pollWizardJob(jobId, siteName), WIZARD_POLL_MS)
+    return
+  }
+  if (detail?.error) {
+    toast.error(apiErrorMessage(detail, 'Lost track of the wizard job.'))
+    wizardLoading.value = ''
+    return
+  }
+  if (detail.status === 'running') {
+    setTimeout(() => pollWizardJob(jobId, siteName), WIZARD_POLL_MS)
+    return
+  }
+  wizardLoading.value = ''
+  if (detail.status === 'success') {
+    toast.success(`Wizard completed for ${siteName}`)
+    setupStatus.value = { ...setupStatus.value, [siteName]: true }
+  } else {
+    toast.error(`Wizard failed (exit code ${detail.exit_code}). Check pilot logs.`)
+  }
+}
+
+onMounted(async () => {
+  await load()
+  loadSetupStatus()
+})
 </script>

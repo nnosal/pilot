@@ -10,8 +10,25 @@ export const mefApi = {
     request.post(`mef/projects/${encodeURIComponent(name)}/pilot-down`).json(),
   pilotOpen: (name) =>
     request.post(`mef/projects/${encodeURIComponent(name)}/pilot-open`).json(),
+  selfPilotDown: () => request.post('mef/self/pilot-down').json(),
   listRegistry: () => request.get('mef/registry').json(),
   getJob: (jobId) => request.get(`mef/jobs/${encodeURIComponent(jobId)}`).json(),
   getAutoLoginToken: (name) =>
     request.post(`mef/projects/${encodeURIComponent(name)}/auto-login-token`).json(),
+  getDbStatus: (name) =>
+    request.get(`mef/projects/${encodeURIComponent(name)}/db-status`).json(),
+  getProjectSites: (name) =>
+    request.get(`mef/projects/${encodeURIComponent(name)}/sites`).json(),
+  startService: (name, service) =>
+    request.post(`mef/projects/${encodeURIComponent(name)}/services/${service}/start`).json(),
+  stopService: (name, service) =>
+    request.post(`mef/projects/${encodeURIComponent(name)}/services/${service}/stop`).json(),
+  testMailpit: (name) =>
+    request.post(`mef/projects/${encodeURIComponent(name)}/mailpit/test`).json(),
+  getSetupStatus: (name, site) =>
+    request
+      .get(`mef/projects/${encodeURIComponent(name)}/sites/${encodeURIComponent(site)}/setup-status`)
+      .json(),
+  runWizard: (name, site) =>
+    request.post(`mef/projects/${encodeURIComponent(name)}/sites/${encodeURIComponent(site)}/wizard`).json(),
 }

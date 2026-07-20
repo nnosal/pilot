@@ -28,7 +28,9 @@ SITE_SCOPED_ENDPOINTS = {
     "sites.migrate_site",
     "sites.reinstall_site",
     "sites.remove_domain",
+    "sites.run_wizard",
     "sites.set_backup_schedule",
+    "sites.setup_status",
     "sites.site_apps",
     "sites.update_configuration",
     "sites.update_domain",
@@ -67,20 +69,20 @@ def test_admin_route_inventory_matches_baseline(tmp_path: Path) -> None:
         if rule.rule.startswith(f"{API_ROOT_PREFIX}/") and not rule.rule.startswith(f"{API_V1_PREFIX}/")
     ]
 
-    assert len(routes) == 113
+    assert len(routes) == 126
     assert unversioned == []
-    assert len({(method, path) for method, path, _, _ in routes}) == 113
+    assert len({(method, path) for method, path, _, _ in routes}) == 126
     assert Counter(method for method, _, _, _ in routes) == {
         "DELETE": 11,
-        "GET": 55,
+        "GET": 59,
         "PATCH": 4,
-        "POST": 40,
+        "POST": 49,
         "PUT": 3,
     }
     assert Counter(policy for _, _, _, policy in routes) == {
-        "authenticated": 64,
+        "authenticated": 75,
         "authenticated+bench-management": 9,
-        "authenticated+site-scope": 28,
+        "authenticated+site-scope": 30,
         "open": 6,
         "setup-conditional": 6,
     }
@@ -100,14 +102,14 @@ def test_admin_route_inventory_matches_baseline(tmp_path: Path) -> None:
         "health": 1,
         "logs": 4,
         "marketplace": 1,
-        "mef": 7,
+        "mef": 17,
         "monitor": 2,
         "network": 1,
         "runtime": 4,
         "s3": 4,
         "settings": 2,
         "setup": 6,
-        "sites": 31,
+        "sites": 34,
         "ssh-keys": 3,
         "metrics": 1,
         "session": 3,
@@ -169,6 +171,8 @@ def test_admin_route_inventory_matches_baseline(tmp_path: Path) -> None:
         ("DELETE", "/api/v1/sites/<name>/backup-schedule"),
         ("GET", "/api/v1/sites/<name>/central/<path:method_path>"),
         ("POST", "/api/v1/sites/<name>/central/<path:method_path>"),
+        ("GET", "/api/v1/sites/<name>/setup-status"),
+        ("POST", "/api/v1/sites/<name>/wizard"),
     } <= route_keys
     assert {
         ("GET", "/api/v1/tasks"),

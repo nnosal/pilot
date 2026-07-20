@@ -58,6 +58,7 @@ _MEF_ENV_KEYS = (
     "WEB_PORT",
     "DB_PORT",
     "REDIS_PORT",
+    "MAILPIT_UI_PORT",
 )
 
 # Pilot admin port formula (mirror .config/mise/tasks/pilot/admin lines 20-24):
@@ -310,6 +311,28 @@ def project_auto_login_token(name: str):
         )
 
 
+@mef_bp.post("/mef/self/pilot-down")
+def self_pilot_down():
+    """Stop the pilot admin daemon serving this very request.
+
+    Unlike ``_spawn_pilot_control``, self-control is the point here: the
+    operator wants to close this instance. ``mise r pilot:down`` runs
+    detached (``start_new_session=True``), so the 202 response reaches the
+    browser before the daemon actually exits.
+    """
+    gate = _gate()
+    if gate is not None:
+        return gate
+
+    job_id = _spawn_job(
+        args=_mise_cmd(["pilot:down"]),
+        env_extras={},
+        cwd=_bench_root().parent,
+        label="self-pilot-down",
+    )
+    return jsonify({"job_id": job_id, "log_url": f"/api/v1/mef/jobs/{job_id}"}), 202
+
+
 @mef_bp.get("/mef/jobs/<job_id>")
 def get_job(job_id: str):
     gate = _gate()
@@ -456,6 +479,7 @@ def _new_env_extras(data: dict) -> dict:
         "overlays": "NEW_OVERLAYS",
         "overwrite": "NEW_OVERWRITE",
         "new_run_setup": "NEW_RUN_SETUP",
+        "new_run_wizard": "NEW_RUN_WIZARD",
     }
     extras: dict[str, str] = {}
     for field, env_var in field_to_env.items():

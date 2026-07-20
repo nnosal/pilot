@@ -14,6 +14,8 @@ export const sitesApi = {
   migrate: (name) => request.post(`sites/${encodeURIComponent(name)}/actions/migrate`).json(),
   reinstall: (name) => request.post(`sites/${encodeURIComponent(name)}/actions/reinstall`).json(),
   drop: (name) => request.delete(`sites/${encodeURIComponent(name)}`).json(),
+  getSetupStatus: (name) => request.get(`sites/${encodeURIComponent(name)}/setup-status`).json(),
+  runWizard: (name) => request.post(`sites/${encodeURIComponent(name)}/wizard`).json(),
 
   apps: {
     list: (name) => request.get(`sites/${encodeURIComponent(name)}/apps`).json(),
@@ -50,6 +52,8 @@ export const sitesApi = {
       ),
     downloadLinks: (name, timestamp) =>
       request.get(`sites/${encodeURIComponent(name)}/backups/${encodeURIComponent(timestamp)}/download-links`).json(),
+    restore: (name, timestamp) =>
+      request.post(`sites/${encodeURIComponent(name)}/backups/${encodeURIComponent(timestamp)}/restore`).json(),
     schedule: {
       get: (name) => request.get(`sites/${encodeURIComponent(name)}/backup-schedule`).json(),
       set: (name, payload) => request.put(`sites/${encodeURIComponent(name)}/backup-schedule`, { json: payload }).json(),
