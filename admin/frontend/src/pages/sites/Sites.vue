@@ -191,7 +191,10 @@ const { session } = useSession()
 const { setBreadcrumbs } = useBreadcrumbs()
 const { sites, loading, error, load } = useSites()
 
-setBreadcrumbs([{ label: 'Sites', route: { name: 'Sites' } }])
+setBreadcrumbs([
+  { label: session.benchName || 'Project', route: { name: 'Projects', query: { expand: session.benchName } } },
+  { label: 'Sites', route: { name: 'Sites' } },
+])
 
 const search = ref('')
 const statusFilter = ref('all')
