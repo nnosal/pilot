@@ -150,6 +150,7 @@ const route = useRoute()
 const router = useRouter()
 
 const sites = ref([])
+const LAST_SITE_KEY = 'sql_playground_last_site'
 const selectedSite = ref(route.query.site || '')
 const query = ref('')
 const modeStr = ref('readonly')
@@ -316,6 +317,7 @@ watch(selectedSite, (site) => {
   if ((route.query.site || '') !== site) {
     router.replace({ path: route.path, query: site ? { site } : {} })
   }
+  if (site) localStorage.setItem(LAST_SITE_KEY, site)
   query.value = site ? localStorage.getItem(`last_sql_query_${site}`) || '' : ''
   results.value = []
   error.value = ''
@@ -336,7 +338,14 @@ watch(perPage, () => { page.value = 1 })
 onMounted(async () => {
   try {
     sites.value = await databaseApi.sites()
-    if (!selectedSite.value && sites.value.length === 1) selectedSite.value = sites.value[0].name
+    if (!selectedSite.value) {
+      const remembered = localStorage.getItem(LAST_SITE_KEY)
+      if (remembered && sites.value.some((s) => s.name === remembered)) {
+        selectedSite.value = remembered
+      } else if (sites.value.length === 1) {
+        selectedSite.value = sites.value[0].name
+      }
+    }
   } catch { }
 })
 </script>
