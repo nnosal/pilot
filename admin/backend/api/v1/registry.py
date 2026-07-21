@@ -432,12 +432,15 @@ def _read_setup_complete(target: Path, site: str) -> bool | None:
 def run_site_wizard(name: str, site: str):
     """Spawn the headless setup wizard targeted at one sibling site.
 
-    ``NONINTERACTIVE``/``SITE_DOMAIN`` steer the mise ``wizard`` task past its
-    gum site prompt — without them a multi-site project would wizard whatever
-    site the task falls back to, not necessarily this one. ``PROJECT_NAME``
-    must come from the SIBLING's own ``.env``, not be inherited from this
-    admin's process env (this admin's own project may use a different one —
-    same bug class as the hardcoded ``"app"`` paths above).
+    ``site`` is passed as the mise ``wizard`` task's positional arg, not just
+    ``SITE_DOMAIN`` env: mise reloads the sibling project's ``.env`` (``_.file``
+    in config.toml) before the task runs, which silently overwrites an
+    env-only override with that project's default site — the wizard would
+    then always target the default site regardless of which site was
+    actually requested. ``PROJECT_NAME`` must come from the SIBLING's own
+    ``.env``, not be inherited from this admin's process env (this admin's
+    own project may use a different one — same bug class as the hardcoded
+    ``"app"`` paths above).
     """
     gate = _gate()
     if gate is not None:
@@ -450,7 +453,7 @@ def run_site_wizard(name: str, site: str):
         return err
     project_name = _read_project_env(target).get("PROJECT_NAME", "app")
     job_id = _spawn_job(
-        args=_mise_cmd(["wizard"]),
+        args=_mise_cmd(["wizard", site]),
         env_extras={"NONINTERACTIVE": "1", "SITE_DOMAIN": site, "PROJECT_NAME": project_name},
         cwd=target,
         label="wizard",

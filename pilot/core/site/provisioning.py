@@ -46,6 +46,7 @@ class SiteProvisioner:
         )
         on_progress(f"Creating site '{self.name}'...")
         site.create(db_type=self.db_type)
+        self.clear_default_site_if_multi_site()
         self.install_apps(site, on_progress)
         self.write_pilot_communication_config(site)
         self.bench.write_common_site_config()
@@ -64,6 +65,24 @@ class SiteProvisioner:
                 continue
             on_progress(f"Installing app '{app_name}'...")
             site.install_app(self.bench.app(app_name))
+
+    def clear_default_site_if_multi_site(self) -> None:
+        """``bench serve`` (no ``--site``) resolves its site from common_site_config's
+        ``default_site`` and pins the WHOLE process to it, ignoring each request's Host
+        header (frappe/utils/bench_helper.py ``get_sites()``). Fine for a single-site
+        bench; breaks Host-based multi-tenancy the moment a 2nd site exists — every
+        session created for a non-default site gets validated against the wrong site's
+        database and rejected as expired."""
+        from pilot.utils import write_private_text
+
+        if len(self.bench.sites()) <= 1:
+            return
+        config_path = self.bench.sites_path / "common_site_config.json"
+        if not config_path.exists():
+            return
+        config = json.loads(config_path.read_text())
+        if config.pop("default_site", None) is not None:
+            write_private_text(config_path, json.dumps(config, indent=1))
 
     def write_pilot_communication_config(self, site: "Site") -> None:
         from admin.backend.auth import ensure_jwt_secret, issue_site_token

@@ -213,6 +213,12 @@ def run_wizard(name: str):
     task runs one level up with ``PROJECT_NAME`` set to the bench dir's name
     (normally ``app``) — mirroring how mef's own sibling-project wizard is
     spawned in ``admin/backend/api/v1/registry.py``.
+
+    ``name`` is passed as the task's positional arg, not just ``SITE_DOMAIN``
+    env: mise reloads the project's ``.env`` (``_.file`` in config.toml)
+    before the task runs, which silently overwrites an env-only override with
+    the project's default site — the wizard would then always target that
+    default site regardless of which site was actually requested.
     """
     bench_root = Path(current_app.config["BENCH_ROOT"])
     if not site_exists(bench_root, name):
@@ -225,7 +231,7 @@ def run_wizard(name: str):
         **_env_extras(data, WIZARD_FIELD_TO_ENV),
     }
     job_id = _spawn_job(
-        args=_mise_cmd(["wizard"]),
+        args=_mise_cmd(["wizard", name]),
         env_extras=env_extras,
         cwd=bench_root.parent,
         label="wizard",
