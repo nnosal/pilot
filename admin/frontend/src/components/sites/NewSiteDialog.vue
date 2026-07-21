@@ -189,8 +189,11 @@ async function loadWildcardDomains() {
 
 function validate(name) {
   if (!name) return 'Site name is required.'
-  if (!/^[a-zA-Z0-9][a-zA-Z0-9\-.]*[a-zA-Z0-9]$|^[a-zA-Z0-9]$/.test(name))
-    return 'Site name must be a valid hostname.'
+  // https:// prefix -> mef local-dev domain via slim (backend registers it); stripped
+  // here only for validation, the prefix itself is still sent to the backend.
+  const bare = name.replace(/^https?:\/\//, '')
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9\-.]*[a-zA-Z0-9]$|^[a-zA-Z0-9]$/.test(bare))
+    return 'Site name must be a valid hostname (optionally prefixed with https://).'
   return null
 }
 

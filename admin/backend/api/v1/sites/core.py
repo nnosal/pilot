@@ -34,7 +34,7 @@ from pilot.tasks.reinstall_site import ReinstallSiteTask
 
 @sites_bp.get("")
 def list_sites():
-    bench_root = current_app.config["BENCH_ROOT"]
+    bench_root = Path(current_app.config["BENCH_ROOT"])
     try:
         sites = SiteProvider(bench_root).get_all()
     except Exception:
@@ -42,7 +42,7 @@ def list_sites():
 
     payload = []
     for site in sites:
-        payload.append(_site_resource(site))
+        payload.append(_site_resource(site, bench_root))
     return jsonify(payload)
 
 
@@ -76,7 +76,7 @@ def detail(name: str):
 
     return jsonify(
         {
-            **_site_resource(site),
+            **_site_resource(site, bench_root),
             "ssl": bool(site.site_config.get("ssl")),
             "installable_apps": installable,
             "http_port": http_port,
@@ -114,7 +114,7 @@ def create_site():
     ):
         return invalid_fields()
 
-    name = fields["name"]
+    is_https, name = _strip_scheme(fields["name"])
     admin_password = secrets.token_urlsafe(16)
     apps = [app.strip() for app in apps_value if app.strip()]
     err = validate_site_name(name) or new_site_name_error(bench_root, name)
@@ -133,7 +133,73 @@ def create_site():
     except Exception as error:
         return task_failure(error)
 
+    if is_https:
+        _register_slim_domain(bench_root, name)
+
     return accepted_task_response(bench_root, task_id)
+
+
+def _strip_scheme(name: str) -> tuple[bool, str]:
+    """https://<host> -> (True, <host>) ; http://<host> or bare <host> -> (False, <host>).
+
+    Mirrors .config/mise/tasks/site/new's _strip_scheme — this is pilot's own "New Site"
+    dialog, a separate code path from the mise CLI that never shares its scheme parsing.
+    """
+    if name.startswith("https://"):
+        return True, name[len("https://") :]
+    if name.startswith("http://"):
+        return False, name[len("http://") :]
+    return False, name
+
+
+def _add_slim_domain_to_env(env_path: Path, domain: str) -> None:
+    """Append ``domain`` to the project .env's SLIM_DOMAINS list (creating the line if
+    absent), deduplicating against whatever is already registered there."""
+    lines = env_path.read_text().splitlines() if env_path.exists() else []
+    current = next((line.split("=", 1)[1].strip() for line in lines if line.strip().startswith("SLIM_DOMAINS")), "")
+    domains = [d.strip() for d in current.split(",") if d.strip()]
+    if domain in domains:
+        return
+    updated = ",".join([*domains, domain])
+    if any(line.strip().startswith("SLIM_DOMAINS") for line in lines):
+        new_lines = [f"SLIM_DOMAINS = {updated}" if line.strip().startswith("SLIM_DOMAINS") else line for line in lines]
+        env_path.write_text("\n".join(new_lines) + "\n")
+    else:
+        with env_path.open("a") as f:
+            f.write(f"SLIM_DOMAINS = {updated}\n")
+
+
+def _register_slim_domain(bench_root: Path, domain: str) -> None:
+    """Register a local-dev HTTPS domain with slim (nilbuild) — mef-specific, mirrors
+    .config/mise/tasks/site/new's _register_slim. Touches the mef PROJECT's own
+    .env/pitchfork.toml (one level above the bench root), not pilot.core state, so it
+    lives in this thin API layer rather than pilot.core.
+    """
+    import contextlib
+    import shutil
+    import subprocess
+
+    project_root = bench_root.parent
+    _add_slim_domain_to_env(project_root / ".env", domain)
+
+    pitchfork_path = project_root / "pitchfork.toml"
+    if pitchfork_path.exists() and "[daemons.slim]" not in pitchfork_path.read_text():
+        with pitchfork_path.open("a") as f:
+            f.write('\n[daemons.slim]\nrun = "mise run slim:server"\ndepends = ["bench"]\n')
+
+    pitchfork = shutil.which("pitchfork")
+    if pitchfork:
+        # Best-effort, mirrors _register_slim's `|| echo "not up yet"` — a daemon that
+        # isn't running yet (first site created before `mise r up`) makes `restart` hang
+        # rather than fail fast, so this must never block the request past the timeout.
+        with contextlib.suppress(subprocess.TimeoutExpired, OSError):
+            subprocess.run(
+                [pitchfork, "restart", "slim"],
+                cwd=project_root,
+                capture_output=True,
+                timeout=10,
+                check=False,
+            )
 
 
 @sites_bp.delete("/<name>")
@@ -245,7 +311,21 @@ def create_login_link(name: str):
     return _no_store(created_response({"url": url}, url))
 
 
-def _site_resource(site: SiteInfo) -> dict:
+def _slim_domains(bench_root: Path) -> set[str]:
+    """Domains registered with slim (mef's local-dev HTTPS proxy) — read straight from
+    the mef project's own .env (one level above the bench root), same source of truth
+    as _register_slim_domain/_strip_scheme above."""
+    env_path = bench_root.parent / ".env"
+    if not env_path.exists():
+        return set()
+    for line in env_path.read_text().splitlines():
+        if line.strip().startswith("SLIM_DOMAINS"):
+            value = line.split("=", 1)[1].strip()
+            return {d.strip() for d in value.split(",") if d.strip()}
+    return set()
+
+
+def _site_resource(site: SiteInfo, bench_root: Path) -> dict:
     framework_branch = site.site_config.get("frappe_branch", "")
     return {
         "name": site.name,
@@ -254,4 +334,5 @@ def _site_resource(site: SiteInfo) -> dict:
         "framework_branch": framework_branch if isinstance(framework_branch, str) else "",
         "broken": site.broken,
         "provisioning": site.provisioning,
+        "slim": site.name in _slim_domains(bench_root),
     }

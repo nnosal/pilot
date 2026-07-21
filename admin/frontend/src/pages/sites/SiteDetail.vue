@@ -22,6 +22,7 @@
             <div class="flex items-center gap-2 min-w-0">
               <h1 class="font-semibold text-ink-gray-9 text-base sm:text-xl truncate">{{ site.name }}</h1>
               <Badge :label="statusLabel" :theme="statusBadgeTheme" variant="subtle" size="md" class="shrink-0" />
+              <Badge :label="networkLabel" :theme="networkTheme" variant="subtle" size="md" class="shrink-0" />
             </div>
             <div class="hidden sm:flex items-center gap-1.5 mt-1 text-ink-gray-5 text-sm">
               <span class="size-3.5 lucide-box" />
@@ -103,6 +104,7 @@ import { useSite } from '@/composables/sites/useSite'
 import { useBench } from '@/composables/benches/useBench'
 import { useIsMobile } from '@/composables/common/useIsMobile'
 import { openTaskDetailPage } from '@/utils/taskRoute'
+import { siteNetworkLabel, siteNetworkTheme } from '@/utils/siteNetwork'
 
 const route = useRoute()
 const router = useRouter()
@@ -122,6 +124,8 @@ const STATUS_LABELS = { online: 'Live', broken: 'Broken', offline: 'Paused', pro
 
 const statusLabel = computed(() => STATUS_LABELS[status.value] ?? status.value)
 const statusBadgeTheme = computed(() => STATUS_THEMES[status.value] ?? 'gray')
+const networkLabel = computed(() => (site.value ? siteNetworkLabel(site.value) : ''))
+const networkTheme = computed(() => (site.value ? siteNetworkTheme(site.value) : 'gray'))
 
 const tabs = [
   { value: 'apps', label: 'Apps' },

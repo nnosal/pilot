@@ -54,6 +54,10 @@
                   <!-- Status -->
                   <Badge :label="statusLabel(site)" :theme="statusTheme(site)" variant="subtle" size="sm"
                     class="shrink-0" />
+
+                  <!-- Local vs slim HTTPS -->
+                  <Badge :label="networkLabel(site)" :theme="networkTheme(site)" variant="subtle" size="sm"
+                    class="shrink-0" />
                 </div>
 
                 <div class="flex justify-end">
@@ -103,8 +107,9 @@
               {{ row.site.name }}
             </RouterLink>
           </div>
-          <div v-else-if="column.key === 'status'">
+          <div v-else-if="column.key === 'status'" class="flex items-center gap-1.5">
             <Badge :label="statusLabel(row.site)" :theme="statusTheme(row.site)" variant="subtle" size="sm" />
+            <Badge :label="networkLabel(row.site)" :theme="networkTheme(row.site)" variant="subtle" size="sm" />
           </div>
           <div v-else-if="column.key === 'apps'" class="text-ink-gray-6 text-sm">
             {{ item }}
@@ -174,6 +179,7 @@ import { sitesApi } from '@/api/sites'
 import { openTaskDetailPage } from '@/utils/taskRoute'
 import { openSiteLogin } from '@/utils/siteLogin'
 import { siteStatus, siteStatusLabel, siteStatusTheme } from '@/utils/siteStatus'
+import { siteNetworkLabel, siteNetworkTheme } from '@/utils/siteNetwork'
 
 const router = useRouter()
 const { session } = useSession()
@@ -201,6 +207,8 @@ const statusOptions = [
 
 const statusLabel = siteStatusLabel
 const statusTheme = siteStatusTheme
+const networkLabel = siteNetworkLabel
+const networkTheme = siteNetworkTheme
 
 function appsLabel(site) {
   const count = site.installed_apps?.length || 0
