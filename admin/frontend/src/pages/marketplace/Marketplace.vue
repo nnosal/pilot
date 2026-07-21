@@ -96,8 +96,17 @@ import MarketplaceAppCard from '@/components/marketplace/MarketplaceAppCard.vue'
 import MarketplaceFilters from '@/components/marketplace/MarketplaceFilters.vue'
 import UpdatesAvailableButton from '@/components/common/UpdatesAvailableButton.vue'
 import { useMarketplace } from '@/composables/apps/useMarketplace'
+import { useSession } from '@/composables/auth/useSession'
+import { useBreadcrumbs } from '@/composables/common/useBreadcrumbs'
 
 const route = useRoute()
+const { session } = useSession()
+const { setBreadcrumbs } = useBreadcrumbs()
+
+setBreadcrumbs([
+  { label: session.benchName || 'Project', route: { name: 'Projects', query: { expand: session.benchName } } },
+  { label: 'Marketplace', route: { name: 'Marketplace' } },
+])
 
 const {
   loading,
