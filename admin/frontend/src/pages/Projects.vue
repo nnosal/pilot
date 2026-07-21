@@ -71,6 +71,7 @@
             variant="subtle"
             size="sm"
           />
+          <Badge :label="`db: ${project.db_engine || 'mariadb'}`" theme="orange" variant="subtle" size="sm" />
           <span class="flex items-center gap-1.5" @click.stop>
             <Badge label="Dev" theme="amber" variant="subtle" size="sm" />
             <Switch :model-value="false" disabled title="Production pipeline not implemented yet" />
@@ -155,7 +156,16 @@
                 class="bg-surface-white px-2.5 py-1.5 rounded border border-outline-gray-1"
               >
                 <div class="flex items-center gap-2">
-                  <span class="text-ink-gray-8 text-sm truncate">{{ site.name }}</span>
+                  <component
+                    :is="project.is_self ? 'RouterLink' : 'a'"
+                    v-bind="project.is_self
+                      ? { to: { name: 'SiteDetail', params: { name: site.name } } }
+                      : { href: siblingSiteUrl(project, site), target: '_blank', rel: 'noopener' }"
+                    class="text-ink-gray-8 hover:text-ink-gray-9 text-sm truncate hover:underline underline-offset-2"
+                  >
+                    {{ site.name }}
+                  </component>
+                  <Badge :label="networkLabel(site)" :theme="networkTheme(site)" variant="subtle" size="sm" />
                   <Badge
                     class="ml-auto"
                     :theme="siteStatusTheme(site)"
@@ -216,6 +226,7 @@ import { useBreadcrumbs } from '@/composables/common/useBreadcrumbs'
 import { useSession } from '@/composables/auth/useSession'
 import { useRegistry } from '@/composables/mef/useRegistry'
 import { siteStatusLabel, siteStatusTheme } from '@/utils/siteStatus'
+import { siteNetworkLabel as networkLabel, siteNetworkTheme as networkTheme } from '@/utils/siteNetwork'
 import { mefApi } from '@/api/mef'
 import { apiErrorMessage } from '@/api/client'
 
@@ -296,6 +307,13 @@ function openService(project, key) {
 function openSite(project, site) {
   if (!project.ports?.web) return
   window.open(`http://${site.name}:${project.ports.web}`, '_blank', 'noopener')
+}
+
+// Self's sites live on this same pilot instance -> SPA RouterLink. A sibling
+// project's sites are served by ITS OWN pilot-admin, a different port/origin,
+// so that one has to be a plain external link.
+function siblingSiteUrl(project, site) {
+  return `http://localhost:${project.pilot_port}/sites/${encodeURIComponent(site.name)}`
 }
 
 const jobLoading = ref(null)

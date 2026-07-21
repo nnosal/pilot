@@ -338,16 +338,19 @@ def project_sites(name: str):
         sites = SiteProvider(_bench_dir(target)).get_all()
     except Exception:
         return jsonify({"sites": []})
-    return jsonify({"sites": [_site_summary(site) for site in sites]})
+    return jsonify({"sites": [_site_summary(site, target) for site in sites]})
 
 
-def _site_summary(site) -> dict:
+def _site_summary(site, project_dir: Path) -> dict:
+    from admin.backend.api.v1.sites.core import _slim_domains
+
     return {
         "name": site.name,
         "exists": site.exists,
         "broken": site.broken,
         "provisioning": site.provisioning,
         "installed_apps": [app for app in site.installed_apps if isinstance(app, str)],
+        "slim": site.name in _slim_domains(_bench_dir(project_dir)),
     }
 
 
