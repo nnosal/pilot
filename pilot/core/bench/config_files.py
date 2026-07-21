@@ -68,7 +68,11 @@ class BenchConfigFiles:
         config.update(
             {
                 "redis_cache": redis_cache,
-                "redis_queue": f"redis://localhost:{redis.queue_port}",
+                # mef runs a single shared redis (no dedicated queue instance) — bench.toml's
+                # redis.queue_port is a placeholder kept only to satisfy RedisConfig.validate()'s
+                # cache_port != queue_port rule, nothing actually listens on it. Point both at
+                # the one real redis, same as redis_socketio right below.
+                "redis_queue": redis_cache,
                 "redis_socketio": redis_cache,
                 "socketio_port": self.bench.config.socketio_port,
                 "webserver_port": self.bench.config.http_port,
