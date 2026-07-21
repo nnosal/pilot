@@ -118,8 +118,10 @@ const siteName = route.params.name
 const { setBreadcrumbs } = useBreadcrumbs()
 const { site, loading, error, status, load, login, backup } = useSite(siteName)
 const { version, load: loadBench } = useBench()
+const { session } = useSession()
 
 setBreadcrumbs([
+  { label: session.benchName || 'Project', route: { name: 'Projects', query: { expand: session.benchName } } },
   { label: 'Sites', route: { name: 'Sites' } },
   { label: siteName },
 ])
@@ -151,7 +153,6 @@ watch(() => route.params.tab, (tab) => {
 })
 
 const tabLabel = computed(() => tabs.find((t) => t.value === activeTab.value)?.label ?? '')
-const { session } = useSession()
 watchEffect(() => {
   const suffix = session.benchName ? ` (${session.benchName})` : ''
   if (site.value) document.title = `${site.value.name} | ${tabLabel.value}${suffix}`

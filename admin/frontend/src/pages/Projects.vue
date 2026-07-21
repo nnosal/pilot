@@ -217,6 +217,7 @@
 
 <script setup>
 import { onMounted, ref, computed } from 'vue'
+import { useRoute } from 'vue-router'
 import { Badge, Button, ErrorMessage, LoadingText, Switch, toast } from 'frappe-ui'
 import UpdatesAvailableButton from '@/components/common/UpdatesAvailableButton.vue'
 import ServiceRow from '@/components/mef/ServiceRow.vue'
@@ -379,5 +380,13 @@ function runWizardForSite(project, site) {
   })
 }
 
-onMounted(load)
+const route = useRoute()
+
+// Deep link from a site's breadcrumb (?expand=<project>) -> land with that
+// project's row already open instead of the collapsed list.
+onMounted(async () => {
+  await load()
+  const target = route.query.expand
+  if (target && !isExpanded(target)) toggleExpand(target)
+})
 </script>
