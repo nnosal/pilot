@@ -12,13 +12,16 @@
         <p v-if="index === 0" class="font-medium text-ink-gray-7 text-sm">Queues</p>
         <TextInput v-model="group.queues" placeholder="default, short, long" class="w-full" />
       </div>
+      <Button v-if="groups.length === 1 && queueList(group.queues).length > 1" variant="subtle"
+        icon-left="lucide-split" @click="splitGroup(index)">Split</Button>
       <Button variant="subtle" icon="lucide-x" :disabled="groups.length === 1" @click="removeGroup(index)" />
     </div>
 
 
     <ErrorMessage v-if="error" :message="error" />
 
-    <div class="flex justify-end gap-2">
+    <div class="flex justify-between items-center gap-2">
+      <Button variant="ghost" @click="resetGroups">Reset to default</Button>
       <Button variant="solid" :loading="saving" @click="save">Save Changes</Button>
     </div>
   </div>
@@ -47,7 +50,7 @@ function removeGroup(index) {
   groups.value.splice(index, 1)
 }
 
-defineExpose({ addGroup })
+const DEFAULT_GROUP = { queues: 'default, short, long', count: 1 }
 
 function queueList(value) {
   return String(value || '')
@@ -55,6 +58,19 @@ function queueList(value) {
     .map((queue) => queue.trim())
     .filter(Boolean)
 }
+
+function splitGroup(index) {
+  const group = groups.value[index]
+  const queues = queueList(group.queues)
+  if (queues.length < 2) return
+  groups.value.splice(index, 1, ...queues.map((queue) => ({ queues: queue, count: group.count })))
+}
+
+function resetGroups() {
+  groups.value = [{ ...DEFAULT_GROUP }]
+}
+
+defineExpose({ addGroup })
 
 function validate() {
   for (const [index, group] of groups.value.entries()) {
