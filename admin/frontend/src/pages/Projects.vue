@@ -71,7 +71,7 @@
             variant="subtle"
             size="sm"
           />
-          <Badge :label="`db: ${project.db_engine || 'mariadb'}`" theme="orange" variant="subtle" size="sm" />
+          <Badge :label="project.db_engine || 'mariadb'" theme="gray" variant="subtle" size="sm" />
           <span class="flex items-center gap-1.5" @click.stop>
             <Badge label="Dev" theme="amber" variant="subtle" size="sm" />
             <Switch :model-value="false" disabled title="Production pipeline not implemented yet" />
