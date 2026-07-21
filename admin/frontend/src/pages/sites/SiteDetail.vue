@@ -27,6 +27,16 @@
             <div class="hidden sm:flex items-center gap-1.5 mt-1 text-ink-gray-5 text-sm">
               <span class="size-3.5 lucide-box" />
               {{ version || 'Version -' }}
+              <template v-if="session.benchName">
+                <span class="text-ink-gray-4">·</span>
+                <RouterLink
+                  :to="{ name: 'Projects', query: { expand: session.benchName } }"
+                  class="flex items-center gap-1 hover:text-ink-gray-9 hover:underline underline-offset-2"
+                >
+                  <span class="size-3.5 lucide-folder" />
+                  {{ session.benchName }}
+                </RouterLink>
+              </template>
               <template v-if="setupComplete === false">
                 <span class="text-ink-gray-4">·</span>
                 <span class="flex items-center gap-1 text-ink-amber-8">
