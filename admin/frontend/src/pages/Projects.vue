@@ -306,6 +306,10 @@ function openService(project, key) {
 }
 
 function openSite(project, site) {
+  if (site.slim) {
+    window.open(`https://${site.name}`, '_blank', 'noopener')
+    return
+  }
   if (!project.ports?.web) return
   window.open(`http://${site.name}:${project.ports.web}`, '_blank', 'noopener')
 }
