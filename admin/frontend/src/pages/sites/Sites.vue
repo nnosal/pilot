@@ -152,6 +152,9 @@
     :has-erpnext="wizardSite.installed_apps?.includes('erpnext') ?? false"
     @completed="setupStatus = { ...setupStatus, [wizardSite.name]: true }"
   />
+
+  <MigrateSiteDialog v-if="migrateSite" v-model="migrateDialogOpen" :site-name="migrateSite.name" />
+  <DropSiteDialog v-if="dropSite" v-model="dropDialogOpen" :site-name="dropSite.name" />
 </template>
 
 <script setup>
@@ -171,6 +174,8 @@ import {
 } from 'frappe-ui'
 import NewSiteDialog from '@/components/sites/NewSiteDialog.vue'
 import RunWizardDialog from '@/components/sites/RunWizardDialog.vue'
+import MigrateSiteDialog from '@/components/sites/MigrateSiteDialog.vue'
+import DropSiteDialog from '@/components/sites/DropSiteDialog.vue'
 import UpdatesAvailableButton from '@/components/common/UpdatesAvailableButton.vue'
 import { useBreadcrumbs } from '@/composables/common/useBreadcrumbs'
 import { useSites } from '@/composables/sites/useSites'
@@ -261,10 +266,28 @@ async function backupNow(site) {
   }
 }
 
+const migrateSite = ref(null)
+const migrateDialogOpen = ref(false)
+
+function openMigrateDialog(site) {
+  migrateSite.value = site
+  migrateDialogOpen.value = true
+}
+
+const dropSite = ref(null)
+const dropDialogOpen = ref(false)
+
+function openDropDialog(site) {
+  dropSite.value = site
+  dropDialogOpen.value = true
+}
+
 function siteMenuOptions(site) {
   return [
     { label: 'Open site', icon: 'lucide-external-link', onClick: () => openSite(site) },
     { label: 'Back up now', icon: 'lucide-archive', onClick: () => backupNow(site) },
+    { label: 'Migrate site', icon: 'lucide-refresh-cw', onClick: () => openMigrateDialog(site) },
+    { label: 'Delete site', icon: 'lucide-trash-2', onClick: () => openDropDialog(site) },
   ]
 }
 

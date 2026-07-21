@@ -77,6 +77,9 @@
     @completed="setupComplete = true"
   />
 
+  <MigrateSiteDialog v-if="site" v-model="showMigrate" :site-name="siteName" />
+  <DropSiteDialog v-if="site" v-model="showDrop" :site-name="siteName" />
+
   <Teleport defer to="#header-actions">
     <Button variant="subtle" size="sm" @click="openSite">
       <template #prefix><span class="size-4 lucide-external-link" /></template>
@@ -97,6 +100,8 @@ import SiteBackups from '@/components/sites/Backups.vue'
 import SiteConfig from '@/components/sites/Config.vue'
 import SiteSettings from '@/components/sites/Settings.vue'
 import RunWizardDialog from '@/components/sites/RunWizardDialog.vue'
+import MigrateSiteDialog from '@/components/sites/MigrateSiteDialog.vue'
+import DropSiteDialog from '@/components/sites/DropSiteDialog.vue'
 import { apiErrorMessage } from '@/api/client'
 import { sitesApi } from '@/api/sites'
 import { useBreadcrumbs } from '@/composables/common/useBreadcrumbs'
@@ -211,6 +216,9 @@ async function backupNow() {
   }
 }
 
+const showMigrate = ref(false)
+const showDrop = ref(false)
+
 const menuOptions = computed(() => [
   ...(isMobile.value && !session.readOnly ? [{ label: 'Install app', icon: 'lucide-plus', onClick: goToMarketplace }] : []),
   { label: 'Login as admin', icon: 'lucide-log-in', onClick: loginAsAdmin },
@@ -218,6 +226,8 @@ const menuOptions = computed(() => [
   ...(session.readOnly || setupComplete.value !== true
     ? []
     : [{ label: 'Reset setup wizard', icon: 'lucide-rotate-ccw', onClick: resetWizard }]),
+  ...(session.readOnly ? [] : [{ label: 'Migrate site', icon: 'lucide-refresh-cw', onClick: () => { showMigrate.value = true } }]),
+  ...(session.readOnly ? [] : [{ label: 'Delete site', icon: 'lucide-trash-2', onClick: () => { showDrop.value = true } }]),
 ])
 
 // Provisioning is a transient state (a new-site/reinstall task still running);

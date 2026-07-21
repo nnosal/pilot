@@ -15,21 +15,7 @@
     </div>
   </div>
 
-  <!-- Migrate dialog -->
-  <Dialog v-model="showMigrate" :options="{ title: 'Migrate this site', size: 'md' }">
-    <template #body-content>
-      <p class="text-ink-gray-7 text-p-sm">
-        This runs <span class="font-mono text-ink-gray-8">bench migrate</span> on
-        <span class="font-semibold text-ink-gray-8 break-all">{{ siteName }}</span> without taking a backup first.
-        If the migration fails partway, you'll need an existing backup to recover.
-      </p>
-      <ErrorMessage v-if="migrateError" :message="migrateError" class="mt-2" />
-      <div class="flex justify-end gap-2 mt-4">
-        <Button variant="outline" @click="showMigrate = false">Cancel</Button>
-        <Button variant="solid" theme="red" :loading="migrating" @click="confirmMigrate">Migrate</Button>
-      </div>
-    </template>
-  </Dialog>
+  <MigrateSiteDialog v-model="showMigrate" :site-name="siteName" />
 
   <!-- Reset dialog -->
   <Dialog v-model="showReset" :options="{ title: 'Reset this site', size: 'md' }">
@@ -54,28 +40,7 @@
     </template>
   </Dialog>
 
-  <!-- Drop dialog -->
-  <Dialog v-model="showDrop" :options="{ title: 'Delete this site', size: 'md' }">
-    <template #body-content>
-      <p class="text-ink-gray-7 text-p-sm">
-        This permanently deletes <span class="font-semibold text-ink-gray-8 break-all">{{ siteName }}</span>
-        and everything on it. Backups are kept for 30 days.
-      </p>
-      <TextInput v-model="confirmName" :placeholder="siteName" class="mt-4 w-full">
-        <template #label>
-          <span class="text-sm break-all">Type {{ siteName }} to confirm</span>
-        </template>
-      </TextInput>
-      <ErrorMessage v-if="dropError" :message="dropError" class="mt-2" />
-      <div class="flex justify-end gap-2 mt-4">
-        <Button variant="outline" @click="showDrop = false">Cancel</Button>
-        <Button variant="solid" theme="red" :loading="dropping" :disabled="confirmName !== siteName"
-          @click="confirmDrop">
-          Delete site
-        </Button>
-      </div>
-    </template>
-  </Dialog>
+  <DropSiteDialog v-model="showDrop" :site-name="siteName" />
 </template>
 
 <script setup>
@@ -85,30 +50,14 @@ import { Button, Dialog, ErrorMessage, TextInput } from 'frappe-ui'
 import { apiErrorMessage } from '@/api/client'
 import { sitesApi } from '@/api/sites'
 import { openTaskDetailPage } from '@/utils/taskRoute'
+import MigrateSiteDialog from '../MigrateSiteDialog.vue'
+import DropSiteDialog from '../DropSiteDialog.vue'
 
 const props = defineProps({ siteName: { type: String, required: true } })
 
 const router = useRouter()
 
 const showMigrate = ref(false)
-const migrating = ref(false)
-const migrateError = ref('')
-
-async function confirmMigrate() {
-  migrating.value = true
-  migrateError.value = ''
-  try {
-    const data = await sitesApi.migrate(props.siteName)
-    if (data.task_id) {
-      showMigrate.value = false
-      openTaskDetailPage(router, data.task_id)
-    } else migrateError.value = apiErrorMessage(data, 'Failed to migrate site.')
-  } catch (e) {
-    migrateError.value = e.message || 'Failed to migrate site.'
-  } finally {
-    migrating.value = false
-  }
-}
 
 const DangerActions = [
   {
@@ -116,7 +65,7 @@ const DangerActions = [
     label: 'Migrate site',
     buttonLabel: 'Migrate',
     description: 'Runs bench migrate for this site without taking a backup first.',
-    action: () => { migrateError.value = ''; showMigrate.value = true },
+    action: () => { showMigrate.value = true },
   },
   {
     key: 'reset',
@@ -128,7 +77,7 @@ const DangerActions = [
     key: 'drop',
     label: 'Drop site',
     description: `Permanently deletes ${props.siteName} and all its data.`,
-    action: () => { confirmName.value = ''; dropError.value = ''; showDrop.value = true },
+    action: () => { showDrop.value = true },
   },
 ]
 
@@ -155,24 +104,4 @@ async function confirmReset() {
 }
 
 const showDrop = ref(false)
-const dropping = ref(false)
-const dropError = ref('')
-
-async function confirmDrop() {
-  dropping.value = true
-  dropError.value = ''
-  try {
-    const data = await sitesApi.drop(props.siteName)
-    if (data.task_id) {
-      showDrop.value = false
-      openTaskDetailPage(router, data.task_id)
-    } else {
-      dropError.value = apiErrorMessage(data, 'Failed to drop site.')
-      dropping.value = false
-    }
-  } catch (e) {
-    dropError.value = e.message || 'Failed to drop site.'
-    dropping.value = false
-  }
-}
 </script>
