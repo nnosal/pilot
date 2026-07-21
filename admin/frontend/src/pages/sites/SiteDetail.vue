@@ -26,6 +26,19 @@
             <div class="hidden sm:flex items-center gap-1.5 mt-1 text-ink-gray-5 text-sm">
               <span class="size-3.5 lucide-box" />
               {{ version || 'Version -' }}
+              <template v-if="setupComplete === false">
+                <span class="text-ink-gray-4">·</span>
+                <span class="flex items-center gap-1 text-ink-amber-8">
+                  <span class="size-3.5 lucide-triangle-alert" />
+                  Setup wizard not completed
+                </span>
+                <button
+                  class="text-ink-gray-6 hover:text-ink-gray-9 text-sm underline underline-offset-2"
+                  @click="wizardDialogOpen = true"
+                >
+                  Run wizard
+                </button>
+              </template>
             </div>
           </div>
         </div>
@@ -55,6 +68,14 @@
     <SiteSettings v-else-if="activeTab === 'settings'" :site-name="siteName" />
   </div>
 
+  <RunWizardDialog
+    v-if="site"
+    v-model="wizardDialogOpen"
+    :site-name="siteName"
+    :has-erpnext="site.installed_apps?.includes('erpnext') ?? false"
+    @completed="setupComplete = true"
+  />
+
   <Teleport defer to="#header-actions">
     <Button variant="subtle" size="sm" @click="openSite">
       <template #prefix><span class="size-4 lucide-external-link" /></template>
@@ -74,7 +95,9 @@ import SiteApps from '@/components/sites/Apps.vue'
 import SiteBackups from '@/components/sites/Backups.vue'
 import SiteConfig from '@/components/sites/Config.vue'
 import SiteSettings from '@/components/sites/Settings.vue'
+import RunWizardDialog from '@/components/sites/RunWizardDialog.vue'
 import { apiErrorMessage } from '@/api/client'
+import { sitesApi } from '@/api/sites'
 import { useBreadcrumbs } from '@/composables/common/useBreadcrumbs'
 import { useSite } from '@/composables/sites/useSite'
 import { useBench } from '@/composables/benches/useBench'
@@ -147,6 +170,33 @@ function loginAsAdmin() {
   })
 }
 
+// ----- setup wizard status/trigger -----
+const setupComplete = ref(null)
+const wizardDialogOpen = ref(false)
+
+async function loadSetupStatus() {
+  try {
+    const result = await sitesApi.getSetupStatus(siteName)
+    setupComplete.value = result?.setup_complete ?? null
+  } catch {
+    setupComplete.value = null
+  }
+}
+
+async function resetWizard() {
+  try {
+    const result = await sitesApi.resetWizard(siteName)
+    if (result?.error) {
+      toast.error(apiErrorMessage(result, 'Could not reset the setup wizard.'))
+      return
+    }
+    setupComplete.value = false
+    toast.success(`Setup wizard reset for ${siteName}`)
+  } catch (caught) {
+    toast.error(caught.message || 'Could not reset the setup wizard.')
+  }
+}
+
 async function backupNow() {
   try {
     const result = await backup()
@@ -161,6 +211,9 @@ const menuOptions = computed(() => [
   ...(isMobile.value && !session.readOnly ? [{ label: 'Install app', icon: 'lucide-plus', onClick: goToMarketplace }] : []),
   { label: 'Login as admin', icon: 'lucide-log-in', onClick: loginAsAdmin },
   ...(session.readOnly ? [] : [{ label: 'Back up now', icon: 'lucide-archive', onClick: backupNow }]),
+  ...(session.readOnly || setupComplete.value !== true
+    ? []
+    : [{ label: 'Reset setup wizard', icon: 'lucide-rotate-ccw', onClick: resetWizard }]),
 ])
 
 // Provisioning is a transient state (a new-site/reinstall task still running);
@@ -179,6 +232,7 @@ onUnmounted(() => { if (provisioningPoll) clearInterval(provisioningPoll) })
 onMounted(() => {
   load()
   loadBench()
+  loadSetupStatus()
 })
 </script>
 

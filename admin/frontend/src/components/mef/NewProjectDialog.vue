@@ -88,6 +88,23 @@
           </span>
         </label>
 
+        <!-- Wizard values (defaults match .config/mise/tasks/wizard's own fallbacks) -->
+        <div v-if="form.new_run_setup && form.new_run_wizard" class="space-y-3 pl-6 border-l-2 border-outline-gray-2">
+          <div class="gap-3 grid grid-cols-2">
+            <FormControl v-model="form.wizard_language" label="Language" type="text" />
+            <FormControl v-model="form.wizard_country" label="Country" type="text" />
+            <FormControl v-model="form.wizard_timezone" label="Timezone" type="text" />
+            <FormControl v-model="form.wizard_currency" label="Currency" type="text" />
+          </div>
+          <FormControl
+            v-if="appsIncludeErpnext"
+            v-model="form.wizard_company"
+            label="Company"
+            type="text"
+            placeholder="Defaults to the project name"
+          />
+        </div>
+
         <ErrorMessage v-if="error" :message="error" />
 
         <div class="flex justify-end gap-2">
@@ -122,6 +139,16 @@ const DB_ENGINE_OPTIONS = ['mariadb', 'dolt', 'sqlite', 'dolt_sqlite']
 const profileOptions = PROFILE_OPTIONS.map((value) => ({ label: value, value }))
 const dbEngineOptions = DB_ENGINE_OPTIONS.map((value) => ({ label: value, value }))
 
+// Mirrors .config/mise/tasks/wizard's own headless fallbacks — shown here so
+// admins see (and can override) what will actually be used before it runs.
+const WIZARD_DEFAULTS = {
+  wizard_language: 'English',
+  wizard_country: 'France',
+  wizard_timezone: 'Europe/Paris',
+  wizard_currency: 'EUR',
+  wizard_company: '',
+}
+
 const form = reactive({
   directory: '',
   profile: 'v16',
@@ -130,7 +157,12 @@ const form = reactive({
   apps_preset: '',
   new_run_setup: true,
   new_run_wizard: false,
+  ...WIZARD_DEFAULTS,
 })
+
+const appsIncludeErpnext = computed(() =>
+  form.apps_preset.toLowerCase().split(',').map((s) => s.trim()).includes('erpnext'),
+)
 
 const error = ref('')
 const submitting = ref(false)
@@ -199,6 +231,7 @@ watch(open, (visible) => {
       apps_preset: '',
       new_run_setup: true,
       new_run_wizard: false,
+      ...WIZARD_DEFAULTS,
     })
     error.value = ''
     submitting.value = false
@@ -275,7 +308,13 @@ function buildPayload() {
   if (apps.length) payload.apps_preset = apps.join(',')
   if (form.new_run_setup) {
     payload.new_run_setup = 1
-    if (form.new_run_wizard) payload.new_run_wizard = 1
+    if (form.new_run_wizard) {
+      payload.new_run_wizard = 1
+      for (const field of Object.keys(WIZARD_DEFAULTS)) {
+        const value = form[field].trim()
+        if (value) payload[field] = value
+      }
+    }
   }
   return payload
 }

@@ -153,9 +153,17 @@ def _project_entry(child: Path, mef_root: Path, host_name: str, pitchfork_states
         },
         "pilot_port": pilot_port,
         "pilot_running": _ping_pilot_health(pilot_port),
-        "sites_count": _count_sites(child / "app" / "sites"),
-        "apps_count": _count_apps(child / "app" / "apps"),
+        "sites_count": _count_sites(_bench_dir(child, env) / "sites"),
+        "apps_count": _count_apps(_bench_dir(child, env) / "apps"),
     }
+
+
+def _bench_dir(target: Path, env: dict | None = None) -> Path:
+    """Sibling project's bench dir — ``PROJECT_NAME`` (default ``app``), not a
+    hardcoded ``"app"``. mef derives it per-project (see ``.env``); a project
+    created with a custom ``PROJECT_NAME`` (e.g. ``frappe``) has no ``app/``
+    dir at all, which silently 404'd every route below before this helper."""
+    return target / (env or _read_project_env(target)).get("PROJECT_NAME", "app")
 
 
 def _profile_path(mef_root: Path, profile: str) -> Path:
@@ -268,7 +276,7 @@ def _resolve_sibling_project(name: str):
 
 def _first_usable_site(target: Path):
     try:
-        sites = SiteProvider(target / "app").get_all()
+        sites = SiteProvider(_bench_dir(target)).get_all()
     except Exception:
         return None
     return next((s for s in sites if s.exists and not s.broken), None)
@@ -277,7 +285,7 @@ def _first_usable_site(target: Path):
 def _resolve_sibling_site(target: Path, site: str):
     """Return ``(SiteInfo, None)`` or ``(None, error_response)``."""
     try:
-        sites = SiteProvider(target / "app").get_all()
+        sites = SiteProvider(_bench_dir(target)).get_all()
     except Exception:
         return None, error_response("site_not_found", f"Site '{site}' not found.", 404)
     resolved = next((s for s in sites if s.name == site), None)
@@ -327,7 +335,7 @@ def project_sites(name: str):
     if err is not None:
         return err
     try:
-        sites = SiteProvider(target / "app").get_all()
+        sites = SiteProvider(_bench_dir(target)).get_all()
     except Exception:
         return jsonify({"sites": []})
     return jsonify({"sites": [_site_summary(site) for site in sites]})
@@ -368,7 +376,7 @@ def test_mailpit(name: str):
     )
     bench = shutil.which("bench") or "bench"
     args = [bench, "--site", site.name, "execute", "frappe.sendmail", "--kwargs", kwargs]
-    job_id = _spawn_job(args=args, env_extras={}, cwd=target / "app", label="mailpit-test")
+    job_id = _spawn_job(args=args, env_extras={}, cwd=_bench_dir(target), label="mailpit-test")
     return jsonify({"job_id": job_id, "log_url": f"/api/v1/mef/jobs/{job_id}"}), 202
 
 
@@ -405,7 +413,7 @@ def _read_setup_complete(target: Path, site: str) -> bool | None:
                 "--args",
                 '["System Settings", "setup_complete"]',
             ],
-            cwd=str(target / "app"),
+            cwd=str(_bench_dir(target)),
             capture_output=True,
             text=True,
             timeout=_BENCH_EXECUTE_TIMEOUT_SECONDS,
@@ -426,7 +434,10 @@ def run_site_wizard(name: str, site: str):
 
     ``NONINTERACTIVE``/``SITE_DOMAIN`` steer the mise ``wizard`` task past its
     gum site prompt — without them a multi-site project would wizard whatever
-    site the task falls back to, not necessarily this one.
+    site the task falls back to, not necessarily this one. ``PROJECT_NAME``
+    must come from the SIBLING's own ``.env``, not be inherited from this
+    admin's process env (this admin's own project may use a different one —
+    same bug class as the hardcoded ``"app"`` paths above).
     """
     gate = _gate()
     if gate is not None:
@@ -437,9 +448,10 @@ def run_site_wizard(name: str, site: str):
     _, err = _resolve_sibling_site(target, site)
     if err is not None:
         return err
+    project_name = _read_project_env(target).get("PROJECT_NAME", "app")
     job_id = _spawn_job(
         args=_mise_cmd(["wizard"]),
-        env_extras={"NONINTERACTIVE": "1", "SITE_DOMAIN": site},
+        env_extras={"NONINTERACTIVE": "1", "SITE_DOMAIN": site, "PROJECT_NAME": project_name},
         cwd=target,
         label="wizard",
     )

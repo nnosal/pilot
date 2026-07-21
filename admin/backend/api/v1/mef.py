@@ -456,8 +456,31 @@ def _available_overlays(mef_root: Path) -> set[str]:
     }
 
 
+# Shared with wizard.py: the headless ``mise r wizard`` task reads these
+# regardless of whether it runs standalone or chained from ``mise r new``.
+WIZARD_FIELD_TO_ENV = {
+    "wizard_language": "WIZARD_LANG",
+    "wizard_country": "WIZARD_COUNTRY",
+    "wizard_timezone": "WIZARD_TZ",
+    "wizard_currency": "WIZARD_CURRENCY",
+    "wizard_company": "WIZARD_COMPANY",
+}
+
+
+def _env_extras(data: dict, field_to_env: dict) -> dict:
+    extras: dict[str, str] = {}
+    for field, env_var in field_to_env.items():
+        if data.get(field) is None:
+            continue
+        value = data[field]
+        if isinstance(value, list):
+            value = ",".join(str(item) for item in value)
+        extras[env_var] = str(value)
+    return extras
+
+
 def _new_env_extras(data: dict) -> dict:
-    """Translate dialog field names to the ``NEW_*`` env vars the task consumes.
+    """Translate dialog field names to the ``NEW_*``/``WIZARD_*`` env vars the task consumes.
 
     UI fields are lowercase nouns (profile, db_engine, overlays, …); the
     headless task reads ``NEW_PROFILE``, ``NEW_DB_ENGINE`` and friends. Inputs
@@ -480,16 +503,9 @@ def _new_env_extras(data: dict) -> dict:
         "overwrite": "NEW_OVERWRITE",
         "new_run_setup": "NEW_RUN_SETUP",
         "new_run_wizard": "NEW_RUN_WIZARD",
+        **WIZARD_FIELD_TO_ENV,
     }
-    extras: dict[str, str] = {}
-    for field, env_var in field_to_env.items():
-        if data.get(field) is None:
-            continue
-        value = data[field]
-        if isinstance(value, list):
-            value = ",".join(str(item) for item in value)
-        extras[env_var] = str(value)
-    return extras
+    return _env_extras(data, field_to_env)
 
 
 def _is_valid_project_name(name: str) -> bool:

@@ -82,13 +82,7 @@
           >
             <span class="size-4 text-ink-amber-8 lucide-triangle-alert shrink-0" />
             <span class="text-ink-amber-9 text-xs">Setup wizard not completed yet.</span>
-            <Button
-              variant="solid"
-              size="sm"
-              class="ml-auto"
-              :loading="wizardLoading === site.name"
-              @click="runWizard(site)"
-            >
+            <Button variant="solid" size="sm" class="ml-auto" @click="openWizardDialog(site)">
               Run wizard
             </Button>
           </div>
@@ -145,6 +139,14 @@
   </Teleport>
 
   <NewSiteDialog v-model="showCreate" :sites="sites" @started="(taskId) => openTaskDetailPage(router, taskId)" />
+
+  <RunWizardDialog
+    v-if="wizardSite"
+    v-model="wizardDialogOpen"
+    :site-name="wizardSite.name"
+    :has-erpnext="wizardSite.installed_apps?.includes('erpnext') ?? false"
+    @completed="setupStatus = { ...setupStatus, [wizardSite.name]: true }"
+  />
 </template>
 
 <script setup>
@@ -163,11 +165,11 @@ import {
   toast,
 } from 'frappe-ui'
 import NewSiteDialog from '@/components/sites/NewSiteDialog.vue'
+import RunWizardDialog from '@/components/sites/RunWizardDialog.vue'
 import UpdatesAvailableButton from '@/components/common/UpdatesAvailableButton.vue'
 import { useBreadcrumbs } from '@/composables/common/useBreadcrumbs'
 import { useSites } from '@/composables/sites/useSites'
 import { apiErrorMessage } from '@/api/client'
-import { mefApi } from '@/api/mef'
 import { sitesApi } from '@/api/sites'
 import { openTaskDetailPage } from '@/utils/taskRoute'
 import { openSiteLogin } from '@/utils/siteLogin'
@@ -262,8 +264,8 @@ const showCreate = ref(false)
 
 // ----- setup wizard status/trigger, fetched once per site after the list loads -----
 const setupStatus = ref({})
-const wizardLoading = ref('')
-const WIZARD_POLL_MS = 1500
+const wizardDialogOpen = ref(false)
+const wizardSite = ref(null)
 
 async function loadSetupStatus() {
   const results = await Promise.all(
@@ -274,46 +276,9 @@ async function loadSetupStatus() {
   )
 }
 
-async function runWizard(site) {
-  wizardLoading.value = site.name
-  try {
-    const result = await sitesApi.runWizard(site.name)
-    if (!result.job_id) {
-      toast.error(apiErrorMessage(result, 'Could not start the setup wizard.'))
-      wizardLoading.value = ''
-      return
-    }
-    pollWizardJob(result.job_id, site.name)
-  } catch (caught) {
-    toast.error(caught.message || 'Could not start the setup wizard.')
-    wizardLoading.value = ''
-  }
-}
-
-async function pollWizardJob(jobId, siteName) {
-  let detail
-  try {
-    detail = await mefApi.getJob(jobId)
-  } catch {
-    setTimeout(() => pollWizardJob(jobId, siteName), WIZARD_POLL_MS)
-    return
-  }
-  if (detail?.error) {
-    toast.error(apiErrorMessage(detail, 'Lost track of the wizard job.'))
-    wizardLoading.value = ''
-    return
-  }
-  if (detail.status === 'running') {
-    setTimeout(() => pollWizardJob(jobId, siteName), WIZARD_POLL_MS)
-    return
-  }
-  wizardLoading.value = ''
-  if (detail.status === 'success') {
-    toast.success(`Wizard completed for ${siteName}`)
-    setupStatus.value = { ...setupStatus.value, [siteName]: true }
-  } else {
-    toast.error(`Wizard failed (exit code ${detail.exit_code}). Check pilot logs.`)
-  }
+function openWizardDialog(site) {
+  wizardSite.value = site
+  wizardDialogOpen.value = true
 }
 
 onMounted(async () => {

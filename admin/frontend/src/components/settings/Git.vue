@@ -25,6 +25,14 @@
       </div>
     </div>
 
+    <div v-if="!connected && ghCli?.available" class="flex justify-between items-center gap-3 bg-surface-gray-1 px-3 py-2 rounded border border-outline-gray-2">
+      <p class="text-ink-gray-7 text-p-sm">
+        <span class="lucide-terminal size-3.5 inline-block align-[-2px] mr-1" />
+        gh CLI is logged in as <span class="font-medium">{{ ghCli.username }}</span>
+      </p>
+      <Button size="sm" variant="subtle" @click="useGhCli">Use this</Button>
+    </div>
+
     <div class="space-y-4">
       <FormControl label="GitHub Username" type="text" v-model="username" placeholder="octocat" />
       <FormControl label="Personal Access Token" type="password" v-model="token"
@@ -52,6 +60,7 @@ const error = ref('')
 const status = ref(null)
 const username = ref('')
 const token = ref('')
+const ghCli = ref(null)
 
 const connected = computed(() => Boolean(status.value?.connected && status.value?.is_token_valid))
 const tokenHelpUrl = computed(
@@ -63,9 +72,18 @@ async function load() {
   try {
     status.value = await gitApi.status()
     if (status.value?.username) username.value = status.value.username
+    if (!connected.value) {
+      ghCli.value = await gitApi.ghCliStatus().catch(() => null)
+    }
   } finally {
     loading.value = false
   }
+}
+
+function useGhCli() {
+  if (!ghCli.value?.available) return
+  username.value = ghCli.value.username
+  token.value = ghCli.value.token
 }
 
 async function verifyAndConnect() {

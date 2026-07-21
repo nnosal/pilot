@@ -48,6 +48,7 @@ declare module 'vue' {
     RemoveDomainDialog: typeof import('./src/components/sites/settings/domains/RemoveDomainDialog.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
+    RunWizardDialog: typeof import('./src/components/sites/RunWizardDialog.vue')['default']
     S3Bucket: typeof import('./src/components/settings/S3Bucket.vue')['default']
     ServiceRow: typeof import('./src/components/mef/ServiceRow.vue')['default']
     Settings: typeof import('./src/components/sites/Settings.vue')['default']

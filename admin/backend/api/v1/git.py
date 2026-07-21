@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import shutil
+import subprocess
 from pathlib import Path
 
 from flask import Blueprint, current_app, jsonify, request
@@ -17,6 +19,8 @@ from pilot.integrations.git import (
 )
 
 git_bp = Blueprint("git", __name__)
+
+_GH_CLI_TIMEOUT_SECONDS = 5
 
 
 def _store() -> GitCredentialStore:
@@ -94,6 +98,35 @@ def save_integration():
 def delete_integration():
     _store().clear()
     return no_content_response()
+
+
+@git_bp.get("/connection/gh-cli")
+def gh_cli_status():
+    """Detect a local ``gh`` CLI login, so the UI can offer a one-click
+    pre-fill instead of asking to paste a token.
+
+    Never auto-connects: this only reports what's available. The user still
+    clicks "Verify & Connect" (same as pasting a token by hand), so a wrong
+    account on a multi-account machine is a visible username to check, not a
+    silent takeover of the git integration.
+    """
+    gh = shutil.which("gh")
+    if not gh:
+        return jsonify({"available": False})
+    try:
+        result = subprocess.run(
+            [gh, "auth", "token"], capture_output=True, text=True, timeout=_GH_CLI_TIMEOUT_SECONDS, check=False
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return jsonify({"available": False})
+    token = result.stdout.strip()
+    if result.returncode != 0 or not token:
+        return jsonify({"available": False})
+    try:
+        account = provider_for_name("github", token).validate()
+    except (GitAuthError, GitProviderError):
+        return jsonify({"available": False})
+    return jsonify({"available": True, "username": account.get("login", ""), "token": token})
 
 
 @git_bp.get("/repositories")

@@ -15,7 +15,10 @@ export const sitesApi = {
   reinstall: (name) => request.post(`sites/${encodeURIComponent(name)}/actions/reinstall`).json(),
   drop: (name) => request.delete(`sites/${encodeURIComponent(name)}`).json(),
   getSetupStatus: (name) => request.get(`sites/${encodeURIComponent(name)}/setup-status`).json(),
-  runWizard: (name) => request.post(`sites/${encodeURIComponent(name)}/wizard`).json(),
+  runWizard: (name, payload = {}) =>
+    request.post(`sites/${encodeURIComponent(name)}/wizard`, { json: payload }).json(),
+  resetWizard: (name) => request.post(`sites/${encodeURIComponent(name)}/wizard/reset`).json(),
+  getWizardOptions: (name) => request.get(`sites/${encodeURIComponent(name)}/wizard/options`).json(),
 
   apps: {
     list: (name) => request.get(`sites/${encodeURIComponent(name)}/apps`).json(),
