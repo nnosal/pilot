@@ -211,7 +211,7 @@ def restart_running_workload(bench: "Bench") -> bool:
         return _restart_supervisor(manager, bench.config.name)
     if isinstance(manager, SystemdProcessManager):
         return _restart_systemd(manager)
-    return False
+    return _restart_pitchfork(bench)
 
 
 def _restart_supervisor(manager, bench_name: str) -> bool:
@@ -269,6 +269,42 @@ def _restart_systemd(manager) -> bool:
         check=True,
     )
     return True
+
+
+def _restart_pitchfork(bench: "Bench") -> bool:
+    """mef: dev benches run under `mise r start`, supervised by pitchfork
+    (not one of pilot's own process managers) — restart there instead of
+    silently no-op'ing when neither supervisor nor systemd is in play.
+    """
+    import json
+    import shutil
+
+    pitchfork = shutil.which("pitchfork")
+    if not pitchfork:
+        return False
+
+    daemon_id = f"{bench.path.parent.name}/bench"
+    try:
+        listed = subprocess.run(
+            [pitchfork, "list", "--json"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
+        )
+        daemons = json.loads(listed.stdout)
+    except (subprocess.SubprocessError, ValueError):
+        return False
+    if not any(d.get("id") == daemon_id for d in daemons):
+        return False
+
+    result = subprocess.run(
+        [pitchfork, "restart", daemon_id],
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+    return result.returncode == 0
 
 
 def _non_admin_supervisor_programs(conf: Path, bench_name: str) -> list[str]:
