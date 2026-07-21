@@ -54,6 +54,8 @@ class SiteLogin:
         host = primary_host(self.site.config.name, site_config)
         config = self.site.bench.config
         if not config.production.enabled:
+            if proxy_tls:
+                return origin("https", host, 443) + "/desk"
             return origin("http", host, config.http_port) + "/desk"
 
         secure = proxy_tls or (config.admin.tls and bool(site_config.get("ssl")))

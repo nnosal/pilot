@@ -294,6 +294,7 @@ def create_login_link(name: str):
     try:
         bench = Bench(bench_root)
         proxy_tls = current_app.config["SESSION_COOKIE_SECURE"] and not bench.config.admin.tls
+        proxy_tls = proxy_tls or name in _slim_domains(bench_root)
         url = bench.site(name).admin_login_url(proxy_tls=proxy_tls)
     except Exception:
         return error_response(

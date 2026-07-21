@@ -32,6 +32,24 @@ def test_create_login_link_returns_url_with_sid(tmp_path: Path) -> None:
     create_session.assert_called_once_with()
 
 
+def test_create_login_link_uses_https_for_slim_registered_site(tmp_path: Path) -> None:
+    bench_root = tmp_path / "benches" / "current"
+    client = _client(bench_root)
+    _write_site(bench_root)
+    bench_root.parent.mkdir(parents=True, exist_ok=True)
+    (bench_root.parent / ".env").write_text("SLIM_DOMAINS=s.localhost\n")
+
+    with patch(
+        "pilot.core.site.login.SiteLogin.create_session",
+        return_value="frappe-session-id",
+    ):
+        response = client.post("/api/v1/sites/s.localhost/login")
+
+    assert response.status_code == 201
+    body = response.get_json()
+    assert body["url"] == "https://s.localhost/desk?sid=frappe-session-id"
+
+
 def test_create_login_link_fails_when_session_creation_fails(tmp_path: Path) -> None:
     bench_root = tmp_path / "benches" / "current"
     client = _client(bench_root)
