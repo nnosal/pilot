@@ -58,6 +58,12 @@
                   <!-- Local vs slim HTTPS -->
                   <Badge :label="networkLabel(site)" :theme="networkTheme(site)" variant="subtle" size="sm"
                     class="shrink-0" />
+
+                  <!-- Currently shared publicly -->
+                  <a v-if="shareStatus[site.name]?.status === 'live'" :href="shareStatus[site.name].url"
+                    target="_blank" rel="noopener" class="shrink-0" @click.stop>
+                    <Badge label="Shared" theme="blue" variant="subtle" size="sm" />
+                  </a>
                 </div>
 
                 <div class="flex justify-end">
@@ -110,6 +116,10 @@
           <div v-else-if="column.key === 'status'" class="flex items-center gap-1.5">
             <Badge :label="statusLabel(row.site)" :theme="statusTheme(row.site)" variant="subtle" size="sm" />
             <Badge :label="networkLabel(row.site)" :theme="networkTheme(row.site)" variant="subtle" size="sm" />
+            <a v-if="shareStatus[row.site.name]?.status === 'live'" :href="shareStatus[row.site.name].url"
+              target="_blank" rel="noopener" @click.stop>
+              <Badge label="Shared" theme="blue" variant="subtle" size="sm" />
+            </a>
           </div>
           <div v-else-if="column.key === 'apps'" class="text-ink-gray-6 text-sm">
             {{ item }}
@@ -159,7 +169,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useSession } from '@/composables/auth/useSession'
 import {
@@ -291,11 +301,23 @@ function openDropDialog(site) {
 const shareSite = ref(null)
 const shareDialogOpen = ref(false)
 const slimConnected = ref(false)
+const shareStatus = ref({})
 
 function openShareDialog(site) {
   shareSite.value = site
   shareDialogOpen.value = true
 }
+
+async function loadShareStatus() {
+  const results = await Promise.all(
+    sites.value.map((site) => sitesApi.share.status(site.name).catch(() => null)),
+  )
+  shareStatus.value = Object.fromEntries(
+    sites.value.map((site, i) => [site.name, results[i]?.status ? results[i] : {}]),
+  )
+}
+
+watch(shareDialogOpen, (open) => { if (!open) loadShareStatus() })
 
 function siteMenuOptions(site) {
   return [
@@ -336,6 +358,7 @@ function openWizardDialog(site) {
 onMounted(async () => {
   await load()
   loadSetupStatus()
+  loadShareStatus()
   shareApi.slimStatus().then((s) => { slimConnected.value = s.connected }).catch(() => {})
 })
 </script>

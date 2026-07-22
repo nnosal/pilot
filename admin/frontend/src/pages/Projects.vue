@@ -166,6 +166,10 @@
                     {{ site.name }}
                   </component>
                   <Badge :label="networkLabel(site)" :theme="networkTheme(site)" variant="subtle" size="sm" />
+                  <a v-if="project.is_self && shareStatus[site.name]?.status === 'live'"
+                    :href="shareStatus[site.name].url" target="_blank" rel="noopener" @click.stop>
+                    <Badge label="Shared" theme="blue" variant="subtle" size="sm" />
+                  </a>
                   <Badge
                     class="ml-auto"
                     :theme="siteStatusTheme(site)"
@@ -178,11 +182,12 @@
                     variant="ghost"
                     size="sm"
                     :disabled="!slimConnected"
-                    title="Share site"
+                    :title="shareStatus[site.name]?.status === 'live' ? 'Manage sharing' : 'Share site'"
                     @click="openShareDialog(site)"
                   >
                     <template #prefix>
-                      <span class="size-4 lucide-share-2" />
+                      <span class="size-4 lucide-share-2"
+                        :class="shareStatus[site.name]?.status === 'live' ? 'text-ink-blue-6' : ''" />
                     </template>
                   </Button>
                   <Button
@@ -229,7 +234,7 @@
 </template>
 
 <script setup>
-import { onMounted, ref, computed } from 'vue'
+import { onMounted, ref, computed, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { Badge, Button, ErrorMessage, LoadingText, Switch, toast } from 'frappe-ui'
 import UpdatesAvailableButton from '@/components/common/UpdatesAvailableButton.vue'
@@ -243,6 +248,7 @@ import { useRegistry } from '@/composables/mef/useRegistry'
 import { siteStatusLabel, siteStatusTheme } from '@/utils/siteStatus'
 import { siteNetworkLabel as networkLabel, siteNetworkTheme as networkTheme } from '@/utils/siteNetwork'
 import { mefApi } from '@/api/mef'
+import { sitesApi } from '@/api/sites'
 import { apiErrorMessage } from '@/api/client'
 import { shareApi } from '@/api/share'
 
@@ -332,11 +338,30 @@ function openSite(project, site) {
 const slimConnected = ref(false)
 const shareSite = ref(null)
 const shareDialogOpen = ref(false)
+const shareStatus = ref({})
 
 function openShareDialog(site) {
   shareSite.value = site
   shareDialogOpen.value = true
 }
+
+// Sharing only exists for self's sites (a sibling's tunnel would be managed by
+// its own separate pilot-admin, unreachable from this instance's API).
+const selfProject = computed(() => projects.value.find((p) => p.is_self))
+const selfSites = computed(() => (selfProject.value ? projectDetails.value[selfProject.value.name]?.sites : null) || [])
+
+async function loadShareStatus() {
+  if (!selfSites.value.length) return
+  const results = await Promise.all(
+    selfSites.value.map((site) => sitesApi.share.status(site.name).catch(() => null)),
+  )
+  shareStatus.value = Object.fromEntries(
+    selfSites.value.map((site, i) => [site.name, results[i]?.status ? results[i] : {}]),
+  )
+}
+
+watch(selfSites, loadShareStatus, { deep: true })
+watch(shareDialogOpen, (open) => { if (!open) loadShareStatus() })
 
 // Self's sites live on this same pilot instance -> SPA RouterLink. A sibling
 // project's sites are served by ITS OWN pilot-admin, a different port/origin,

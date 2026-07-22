@@ -23,6 +23,10 @@
               <h1 class="font-semibold text-ink-gray-9 text-base sm:text-xl truncate">{{ site.name }}</h1>
               <Badge :label="statusLabel" :theme="statusBadgeTheme" variant="subtle" size="md" class="shrink-0" />
               <Badge :label="networkLabel" :theme="networkTheme" variant="subtle" size="md" class="shrink-0" />
+              <a v-if="shareStatus.status === 'live'" :href="shareStatus.url" target="_blank" rel="noopener"
+                class="shrink-0" @click.stop>
+                <Badge label="Shared" theme="blue" variant="subtle" size="md" />
+              </a>
             </div>
             <div class="hidden sm:flex items-center gap-1.5 mt-1 text-ink-gray-5 text-sm">
               <span class="size-3.5 lucide-box" />
@@ -234,6 +238,7 @@ const showMigrate = ref(false)
 const showDrop = ref(false)
 const showShare = ref(false)
 const slimConnected = ref(false)
+const shareStatus = ref({})
 
 const menuOptions = computed(() => [
   ...(isMobile.value && !session.readOnly ? [{ label: 'Install app', icon: 'lucide-plus', onClick: goToMarketplace }] : []),
@@ -245,7 +250,12 @@ const menuOptions = computed(() => [
   ...(session.readOnly ? [] : [{ label: 'Migrate site', icon: 'lucide-refresh-cw', onClick: () => { showMigrate.value = true } }]),
   ...(session.readOnly
     ? []
-    : [{ label: 'Share site', icon: 'lucide-share-2', disabled: !slimConnected.value, onClick: () => { showShare.value = true } }]),
+    : [{
+        label: shareStatus.value.status === 'live' ? 'Manage sharing' : 'Share site',
+        icon: 'lucide-share-2',
+        disabled: !slimConnected.value,
+        onClick: () => { showShare.value = true },
+      }]),
   ...(session.readOnly ? [] : [{ label: 'Delete site', icon: 'lucide-trash-2', onClick: () => { showDrop.value = true } }]),
 ])
 
@@ -262,11 +272,18 @@ watch(status, (value) => {
 })
 onUnmounted(() => { if (provisioningPoll) clearInterval(provisioningPoll) })
 
+function refreshShareStatus() {
+  sitesApi.share.status(siteName).then((s) => { shareStatus.value = s.status ? s : {} }).catch(() => {})
+}
+
+watch(showShare, (open) => { if (!open) refreshShareStatus() })
+
 onMounted(() => {
   load()
   loadBench()
   loadSetupStatus()
   shareApi.slimStatus().then((s) => { slimConnected.value = s.connected }).catch(() => {})
+  refreshShareStatus()
 })
 </script>
 
