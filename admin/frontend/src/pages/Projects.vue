@@ -174,6 +174,18 @@
                     size="sm"
                   />
                   <Button
+                    v-if="project.is_self"
+                    variant="ghost"
+                    size="sm"
+                    :disabled="!slimConnected"
+                    title="Share site"
+                    @click="openShareDialog(site)"
+                  >
+                    <template #prefix>
+                      <span class="size-4 lucide-share-2" />
+                    </template>
+                  </Button>
+                  <Button
                     variant="ghost"
                     size="sm"
                     :disabled="!project.ports?.web"
@@ -213,6 +225,7 @@
 
   <NewProjectDialog v-if="session.allowMefManagement" v-model="showNewProject" @created="load" />
   <DeleteProjectDialog v-model="showDeleteDialog" :project="deleteTarget" @deleted="load" />
+  <ShareSiteDialog v-if="shareSite" v-model="shareDialogOpen" :site-name="shareSite.name" />
 </template>
 
 <script setup>
@@ -223,6 +236,7 @@ import UpdatesAvailableButton from '@/components/common/UpdatesAvailableButton.v
 import ServiceRow from '@/components/mef/ServiceRow.vue'
 import NewProjectDialog from '@/components/mef/NewProjectDialog.vue'
 import DeleteProjectDialog from '@/components/mef/DeleteProjectDialog.vue'
+import ShareSiteDialog from '@/components/sites/ShareSiteDialog.vue'
 import { useBreadcrumbs } from '@/composables/common/useBreadcrumbs'
 import { useSession } from '@/composables/auth/useSession'
 import { useRegistry } from '@/composables/mef/useRegistry'
@@ -230,6 +244,7 @@ import { siteStatusLabel, siteStatusTheme } from '@/utils/siteStatus'
 import { siteNetworkLabel as networkLabel, siteNetworkTheme as networkTheme } from '@/utils/siteNetwork'
 import { mefApi } from '@/api/mef'
 import { apiErrorMessage } from '@/api/client'
+import { shareApi } from '@/api/share'
 
 const { session } = useSession()
 const { setBreadcrumbs } = useBreadcrumbs()
@@ -314,6 +329,15 @@ function openSite(project, site) {
   window.open(`http://${site.name}:${project.ports.web}`, '_blank', 'noopener')
 }
 
+const slimConnected = ref(false)
+const shareSite = ref(null)
+const shareDialogOpen = ref(false)
+
+function openShareDialog(site) {
+  shareSite.value = site
+  shareDialogOpen.value = true
+}
+
 // Self's sites live on this same pilot instance -> SPA RouterLink. A sibling
 // project's sites are served by ITS OWN pilot-admin, a different port/origin,
 // so that one has to be a plain external link.
@@ -392,5 +416,6 @@ onMounted(async () => {
   await load()
   const target = route.query.expand
   if (target && !isExpanded(target)) toggleExpand(target)
+  shareApi.slimStatus().then((s) => { slimConnected.value = s.connected }).catch(() => {})
 })
 </script>

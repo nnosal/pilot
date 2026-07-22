@@ -159,7 +159,7 @@ watch(open, async (value) => {
   } finally {
     loading.value = false
   }
-})
+}, { immediate: true })
 
 onBeforeUnmount(stopPoll)
 </script>
