@@ -123,8 +123,8 @@ def test_drop_uses_postgres_root_creds(tmp_path: Path, monkeypatch) -> None:
 
     cmd = _capture_drop_cmd(tmp_path, monkeypatch, bench)["cmd"]
     assert "drop-site" in cmd
-    assert cmd[cmd.index("--db-root-username") + 1] == "postgres"
-    assert cmd[cmd.index("--db-root-password") + 1] == "pgpw"
+    assert cmd[cmd.index("--root-login") + 1] == "postgres"
+    assert cmd[cmd.index("--root-password") + 1] == "pgpw"
 
 
 def test_drop_uses_mariadb_root_creds(tmp_path: Path, monkeypatch) -> None:
@@ -132,5 +132,5 @@ def test_drop_uses_mariadb_root_creds(tmp_path: Path, monkeypatch) -> None:
     bench = _make_bench(tmp_path)  # mariadb, root_password "root"
 
     cmd = _capture_drop_cmd(tmp_path, monkeypatch, bench)["cmd"]
-    assert cmd[cmd.index("--db-root-username") + 1] == "root"
-    assert cmd[cmd.index("--db-root-password") + 1] == "root"
+    assert cmd[cmd.index("--root-login") + 1] == "root"
+    assert cmd[cmd.index("--root-password") + 1] == "root"

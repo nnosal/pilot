@@ -1,3 +1,4 @@
+import json
 import shlex
 from pathlib import Path
 
@@ -585,10 +586,18 @@ def test_honcho_start_writes_per_process_pid_files(tmp_path: Path) -> None:
 
 
 def _capture_site_cmd(monkeypatch) -> dict:
-    captured: dict = {}
-    monkeypatch.setattr(
-        "pilot.core.site.commands.run_command", lambda cmd, **kw: captured.setdefault("cmd", cmd)
-    )
+    """`cmd`/`kwargs` always reflect the FIRST run_command call - the one under
+    test for restore/reinstall/migrate (which only ever make one call) and for
+    create (whose first call is new-site; create() also fires a second,
+    best-effort set-config call - see `calls` for that one)."""
+    captured: dict = {"calls": []}
+
+    def _fake_run_command(cmd, **kw):
+        captured["calls"].append({"cmd": cmd, "kwargs": kw})
+        captured["cmd"] = captured["calls"][0]["cmd"]
+        captured["kwargs"] = captured["calls"][0]["kwargs"]
+
+    monkeypatch.setattr("pilot.core.site.commands.run_command", _fake_run_command)
     return captured
 
 
@@ -610,8 +619,8 @@ def test_site_create_postgres_builds_db_args(tmp_path: Path, monkeypatch: pytest
     assert cmd[cmd.index("--db-type") + 1] == "postgres"
     assert cmd[cmd.index("--db-host") + 1] == "localhost"
     assert cmd[cmd.index("--db-port") + 1] == "5433"
-    assert cmd[cmd.index("--db-root-username") + 1] == "postgres"
-    assert cmd[cmd.index("--db-root-password") + 1] == "pgsecret"
+    assert cmd[cmd.index("--mariadb-root-username") + 1] == "postgres"
+    assert cmd[cmd.index("--mariadb-root-password") + 1] == "pgsecret"
     assert "--db-socket" not in cmd
 
 
@@ -625,8 +634,159 @@ def test_site_create_mariadb_when_bench_is_mariadb(tmp_path: Path, monkeypatch: 
     cmd = captured["cmd"]
     # mariadb is frappe's default engine - no --db-type flag is passed
     assert "--db-type" not in cmd
-    assert cmd[cmd.index("--db-root-username") + 1] == "root"
+    assert cmd[cmd.index("--mariadb-root-username") + 1] == "root"
     assert "--db-host" in cmd
+
+
+def test_site_create_enables_developer_mode_after_new_site(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """developer_mode=0 (the frappe default) routes get_hooks() through a
+    Redis-cached path that pickles the collected hooks dict - if any installed
+    app's hooks.py holds an unpicklable value, that raises "can't pickle
+    module objects" (confirmed live, installing a real app on a freshly
+    created site). developer_mode=1 skips the cache entirely; mef's own
+    site:new task sets it for the same reason, so create() must too."""
+    bench = make_bench(tmp_path)
+    captured = _capture_site_cmd(monkeypatch)
+    monkeypatch.setattr("pilot.managers.database.mariadb.MariaDBManager._detect_socket", lambda self: "")
+
+    Site(SiteConfig(name="mdb.localhost", apps=["frappe"], admin_password="secret"), bench).create()
+
+    assert len(captured["calls"]) == 2
+    set_config_cmd = captured["calls"][1]["cmd"]
+    assert set_config_cmd[-3:] == ["set-config", "developer_mode", "1"]
+
+
+def test_site_create_ignores_set_config_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The developer_mode convenience setting is best-effort - it must not fail
+    an otherwise-successful site creation."""
+    from pilot.exceptions import CommandError
+
+    bench = make_bench(tmp_path)
+    monkeypatch.setattr("pilot.managers.database.mariadb.MariaDBManager._detect_socket", lambda self: "")
+    calls = []
+
+    def _fake_run_command(cmd, **kw):
+        calls.append(cmd)
+        if len(calls) == 2:
+            raise CommandError("boom", 1)
+
+    monkeypatch.setattr("pilot.core.site.commands.run_command", _fake_run_command)
+
+    Site(SiteConfig(name="mdb.localhost", apps=["frappe"], admin_password="secret"), bench).create()
+
+    assert len(calls) == 2
+
+
+def test_supports_db_socket_option_false_when_frappe_checkout_missing(tmp_path: Path) -> None:
+    bench = make_bench(tmp_path)
+    assert bench.supports_db_socket_option is False
+
+
+def test_supports_db_socket_option_true_when_frappe_has_the_flag(tmp_path: Path) -> None:
+    bench = make_bench(tmp_path)
+    site_py = bench.apps_path / "frappe" / "frappe" / "commands" / "site.py"
+    site_py.parent.mkdir(parents=True)
+    site_py.write_text("@click.option('--db-socket', '--mariadb-db-socket')\n")
+
+    assert bench.supports_db_socket_option is True
+
+
+def test_supports_db_socket_option_false_on_frappe_v12(tmp_path: Path) -> None:
+    """v12's frappe/commands/site.py has no --db-socket option at all (confirmed
+    live and by reading its source: only --db-host/--db-port/--no-mariadb-socket)."""
+    bench = make_bench(tmp_path)
+    site_py = bench.apps_path / "frappe" / "frappe" / "commands" / "site.py"
+    site_py.parent.mkdir(parents=True)
+    site_py.write_text("@click.option('--no-mariadb-socket', is_flag=True)\n")
+
+    assert bench.supports_db_socket_option is False
+
+
+def test_site_create_mariadb_sets_mysql_tcp_port_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """frappe's DbManager.restore_database shells out to the `mysql` CLI with
+    -h but no -P/--port - on mef's non-default dbdeployer ports that connects
+    to the wrong (default) port and the SQL import silently fails. `mysql`
+    falls back to MYSQL_TCP_PORT when no -P is given, so it must be set here.
+    Confirmed live: new-site failed with "Can't connect to server on
+    '127.0.0.1'" every time until this env var matched the real port."""
+    bench = make_bench(tmp_path)
+    bench.config.mariadb.port = 8416
+    captured = _capture_site_cmd(monkeypatch)
+    monkeypatch.setattr("pilot.managers.database.mariadb.MariaDBManager._detect_socket", lambda self: "")
+
+    Site(SiteConfig(name="mdb.localhost", apps=["frappe"], admin_password="secret"), bench).create()
+
+    assert captured["kwargs"]["env"]["MYSQL_TCP_PORT"] == "8416"
+
+
+def test_site_create_sqlite_does_not_set_mysql_tcp_port_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bench = make_bench(tmp_path)
+    bench.config.db_type = "sqlite"
+    captured = _capture_site_cmd(monkeypatch)
+
+    Site(SiteConfig(name="sq.localhost", apps=["frappe"], admin_password="secret"), bench).create()
+
+    assert captured["kwargs"]["env"] is None
+
+
+def test_site_restore_mariadb_sets_mysql_tcp_port_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    bench = make_bench(tmp_path)
+    bench.config.mariadb.port = 8416
+    captured = _capture_site_cmd(monkeypatch)
+
+    Site(SiteConfig(name="m.localhost", apps=[]), bench).restore("/tmp/db.sql.gz")
+
+    assert captured["kwargs"]["env"]["MYSQL_TCP_PORT"] == "8416"
+
+
+def test_site_reinstall_mariadb_sets_mysql_tcp_port_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    bench = make_bench(tmp_path)
+    bench.config.mariadb.port = 8416
+    captured = _capture_site_cmd(monkeypatch)
+
+    Site(SiteConfig(name="m.localhost", apps=[]), bench).reinstall("secret")
+
+    assert captured["kwargs"]["env"]["MYSQL_TCP_PORT"] == "8416"
+
+
+def test_site_create_mariadb_falls_back_to_db_host_when_socket_unsupported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """v12 has no --db-socket option at all - even when a real socket path is
+    detected, new-site must fall back to --db-host/--db-port there (confirmed
+    live: passing --db-socket raised "no such option: --db-[redacted]-username"
+    for the neighboring flag, and --db-socket is equally absent)."""
+    bench = make_bench(tmp_path)
+    captured = _capture_site_cmd(monkeypatch)
+    monkeypatch.setattr(
+        "pilot.managers.database.mariadb.MariaDBManager._detect_socket", lambda self: "/tmp/mysql.sock"
+    )
+
+    Site(SiteConfig(name="mdb.localhost", apps=["frappe"], admin_password="secret"), bench).create()
+
+    cmd = captured["cmd"]
+    assert "--db-socket" not in cmd
+    assert "--db-host" in cmd
+
+
+def test_site_create_mariadb_uses_db_socket_when_supported(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    bench = make_bench(tmp_path)
+    site_py = bench.apps_path / "frappe" / "frappe" / "commands" / "site.py"
+    site_py.parent.mkdir(parents=True)
+    site_py.write_text("@click.option('--db-socket', '--mariadb-db-socket')\n")
+    captured = _capture_site_cmd(monkeypatch)
+    monkeypatch.setattr(
+        "pilot.managers.database.mariadb.MariaDBManager._detect_socket", lambda self: "/tmp/mysql.sock"
+    )
+
+    Site(SiteConfig(name="mdb.localhost", apps=["frappe"], admin_password="secret"), bench).create()
+
+    cmd = captured["cmd"]
+    assert cmd[cmd.index("--db-socket") + 1] == "/tmp/mysql.sock"
 
 
 def test_site_restore_uses_postgres_root_creds(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -638,8 +798,8 @@ def test_site_restore_uses_postgres_root_creds(tmp_path: Path, monkeypatch: pyte
     cmd = captured["cmd"]
     assert "restore" in cmd
     assert "--db-type" not in cmd  # restore reads the engine from the site's config
-    assert cmd[cmd.index("--db-root-username") + 1] == "postgres"
-    assert cmd[cmd.index("--db-root-password") + 1] == "pgpw"
+    assert cmd[cmd.index("--mariadb-root-username") + 1] == "postgres"
+    assert cmd[cmd.index("--mariadb-root-password") + 1] == "pgpw"
 
 
 def test_site_restore_uses_mariadb_root_creds(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -652,7 +812,7 @@ def test_site_restore_uses_mariadb_root_creds(tmp_path: Path, monkeypatch: pytes
 
     cmd = captured["cmd"]
     assert "--db-type" not in cmd
-    assert cmd[cmd.index("--db-root-username") + 1] == "root"
+    assert cmd[cmd.index("--mariadb-root-username") + 1] == "root"
     assert cmd[cmd.index("--with-public-files") + 1] == "/tmp/pub.tar"
     assert cmd[cmd.index("--with-private-files") + 1] == "/tmp/priv.tar"
 
@@ -666,8 +826,8 @@ def test_site_reinstall_postgres_root_creds(tmp_path: Path, monkeypatch: pytest.
     cmd = captured["cmd"]
     assert "reinstall" in cmd and "--yes" in cmd
     assert cmd[cmd.index("--admin-password") + 1] == "secret"
-    assert cmd[cmd.index("--db-root-username") + 1] == "postgres"
-    assert cmd[cmd.index("--db-root-password") + 1] == "pgpw"
+    assert cmd[cmd.index("--mariadb-root-username") + 1] == "postgres"
+    assert cmd[cmd.index("--mariadb-root-password") + 1] == "pgpw"
 
 
 def test_site_reinstall_mariadb_root_creds(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -677,7 +837,7 @@ def test_site_reinstall_mariadb_root_creds(tmp_path: Path, monkeypatch: pytest.M
     Site(SiteConfig(name="m.localhost", apps=[]), bench).reinstall("secret")
 
     cmd = captured["cmd"]
-    assert cmd[cmd.index("--db-root-username") + 1] == "root"
+    assert cmd[cmd.index("--mariadb-root-username") + 1] == "root"
 
 
 def test_site_create_and_reinstall_reject_empty_admin_password(tmp_path: Path) -> None:
@@ -720,14 +880,80 @@ def test_site_create_postgres_empty_password_uses_placeholder(
 
     cmd = captured["cmd"]
     # frappe prompts on an empty password (hanging the task); a placeholder avoids it.
-    assert cmd[cmd.index("--db-root-password") + 1] == "trust_auth"
+    assert cmd[cmd.index("--mariadb-root-password") + 1] == "trust_auth"
 
 
 def test_bench_db_root_args_postgres(tmp_path: Path) -> None:
     bench = _postgres_bench(tmp_path, root_password="pgpw")
-    assert bench.db_root_args == ["--db-root-username", "postgres", "--db-root-password", "pgpw"]
+    assert bench.db_root_args == ["--mariadb-root-username", "postgres", "--mariadb-root-password", "pgpw"]
 
 
 def test_bench_db_root_args_mariadb(tmp_path: Path) -> None:
     bench = make_bench(tmp_path)
-    assert bench.db_root_args == ["--db-root-username", "root", "--db-root-password", "root"]
+    assert bench.db_root_args == ["--mariadb-root-username", "root", "--mariadb-root-password", "root"]
+
+
+def test_bench_drop_site_root_args_mariadb(tmp_path: Path) -> None:
+    """drop-site uses a different flag spelling than new-site/restore/reinstall - v12's
+    drop-site doesn't accept --mariadb-root-username at all, only --root-login
+    (confirmed by reading frappe/commands/site.py; v13+ kept it as an alias there)."""
+    bench = make_bench(tmp_path)
+    assert bench.drop_site_root_args == ["--root-login", "root", "--root-password", "root"]
+
+
+def test_bench_drop_site_root_args_postgres(tmp_path: Path) -> None:
+    bench = _postgres_bench(tmp_path, root_password="pgpw")
+    assert bench.drop_site_root_args == ["--root-login", "postgres", "--root-password", "pgpw"]
+
+
+def _write_site_dir(bench: Bench, name: str) -> None:
+    site_dir = bench.sites_path / name
+    site_dir.mkdir(parents=True)
+    (site_dir / "site_config.json").write_text("{}")
+
+
+def test_clear_default_site_noop_for_single_site_bench(tmp_path: Path) -> None:
+    from pilot.core.site.provisioning import SiteProvisioner
+
+    bench = make_bench(tmp_path)
+    bench.create_directories()
+    _write_site_dir(bench, "only.localhost")
+    (bench.sites_path / "currentsite.txt").write_text("only.localhost")
+
+    SiteProvisioner(bench, "only.localhost", [], "secret").clear_default_site_if_multi_site()
+
+    assert (bench.sites_path / "currentsite.txt").read_text() == "only.localhost"
+
+
+def test_clear_default_site_removes_currentsite_txt_when_multi_site(tmp_path: Path) -> None:
+    """bench start/frappe serve (no --site) falls back to sites/currentsite.txt for
+    which site to pin the whole dev-server process to (frappe/utils/bench_helper.py's
+    get_sites()) - stale content here silently breaks Host-based routing for every
+    site except the one it names. Confirmed live: a real, valid session for a 2nd
+    site got looked up against the wrong site's database and read back as Guest."""
+    from pilot.core.site.provisioning import SiteProvisioner
+
+    bench = make_bench(tmp_path)
+    bench.create_directories()
+    _write_site_dir(bench, "first.localhost")
+    _write_site_dir(bench, "second.localhost")
+    (bench.sites_path / "currentsite.txt").write_text("first.localhost")
+
+    SiteProvisioner(bench, "second.localhost", [], "secret").clear_default_site_if_multi_site()
+
+    assert not (bench.sites_path / "currentsite.txt").exists()
+
+
+def test_clear_default_site_removes_common_config_default_site_when_multi_site(tmp_path: Path) -> None:
+    from pilot.core.site.provisioning import SiteProvisioner
+
+    bench = make_bench(tmp_path)
+    bench.create_directories()
+    _write_site_dir(bench, "first.localhost")
+    _write_site_dir(bench, "second.localhost")
+    (bench.sites_path / "common_site_config.json").write_text('{"default_site": "first.localhost"}')
+
+    SiteProvisioner(bench, "second.localhost", [], "secret").clear_default_site_if_multi_site()
+
+    config = json.loads((bench.sites_path / "common_site_config.json").read_text())
+    assert "default_site" not in config

@@ -16,23 +16,46 @@ class BenchConfigFiles:
 
     @property
     def db_root_args(self) -> list[str]:
+        # --mariadb-root-username/--mariadb-root-password: see the matching
+        # comment in pilot/core/site/commands.py's mariadb_db_args - --db-root-*
+        # doesn't exist on Frappe v12, the legacy names work on every version.
         if self.bench.config.db_type == "postgres":
             postgres = self.bench.config.postgres
             return [
-                "--db-root-username",
+                "--mariadb-root-username",
                 postgres.admin_user,
-                "--db-root-password",
+                "--mariadb-root-password",
                 self.postgres_root_password,
             ]
         if self.bench.config.db_type == "sqlite":
             return []
         mariadb = self.bench.config.mariadb
         return [
-            "--db-root-username",
+            "--mariadb-root-username",
             mariadb.admin_user,
-            "--db-root-password",
+            "--mariadb-root-password",
             mariadb.root_password,
         ]
+
+    @property
+    def drop_site_root_args(self) -> list[str]:
+        """Root creds for `bench drop-site` specifically.
+
+        Unlike new-site/restore/reinstall, v12's `drop-site` doesn't accept
+        `--mariadb-root-username`/`--mariadb-root-password` at all - only
+        `--root-login`/`--root-password` (confirmed by reading its
+        frappe/commands/site.py). v13+ kept `--root-login`/`--root-password` as
+        aliases of the same option there too, so this spelling is the one that
+        works on every version - for drop-site only, `db_root_args`'s spelling
+        doesn't apply here.
+        """
+        if self.bench.config.db_type == "postgres":
+            postgres = self.bench.config.postgres
+            return ["--root-login", postgres.admin_user, "--root-password", self.postgres_root_password]
+        if self.bench.config.db_type == "sqlite":
+            return []
+        mariadb = self.bench.config.mariadb
+        return ["--root-login", mariadb.admin_user, "--root-password", mariadb.root_password]
 
     @property
     def postgres_root_password(self) -> str:

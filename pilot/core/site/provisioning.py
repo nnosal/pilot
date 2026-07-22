@@ -67,22 +67,37 @@ class SiteProvisioner:
             site.install_app(self.bench.app(app_name))
 
     def clear_default_site_if_multi_site(self) -> None:
-        """``bench serve`` (no ``--site``) resolves its site from common_site_config's
-        ``default_site`` and pins the WHOLE process to it, ignoring each request's Host
-        header (frappe/utils/bench_helper.py ``get_sites()``). Fine for a single-site
-        bench; breaks Host-based multi-tenancy the moment a 2nd site exists — every
-        session created for a non-default site gets validated against the wrong site's
-        database and rejected as expired."""
+        """``bench start``/``frappe serve`` (no ``--site``) pins the WHOLE dev-server
+        process to a single site, ignoring each request's Host header, if it can
+        resolve ANY default site — breaking Host-based multi-tenancy the moment a 2nd
+        site exists in the bench: every session created for a non-default site gets
+        looked up against the wrong site's database and silently downgraded to Guest
+        (confirmed live: a real session, valid in its own site's tabSessions, read
+        back as user='Guest' because the request never actually reached that site).
+
+        Two independent mechanisms can supply that default, and both must be cleared:
+
+        - ``common_site_config.json``'s ``default_site`` key.
+        - ``sites/currentsite.txt`` — frappe/utils/bench_helper.py's ``get_sites()``
+          falls back to this file's content when no ``--site`` flag is given, and
+          frappe/commands/site.py's ``new_site()`` writes it via ``use(site)``
+          whenever a site is created while it's the bench's ONLY site. That happens
+          for the bench's first site (created outside pilot, e.g. via mef's own
+          `mise r new`) - a SECOND site added later through pilot never triggers
+          `use()` again, so this file keeps pointing at the first site forever
+          unless removed here.
+        """
         from pilot.utils import write_private_text
 
         if len(self.bench.sites()) <= 1:
             return
         config_path = self.bench.sites_path / "common_site_config.json"
-        if not config_path.exists():
-            return
-        config = json.loads(config_path.read_text())
-        if config.pop("default_site", None) is not None:
-            write_private_text(config_path, json.dumps(config, indent=1))
+        if config_path.exists():
+            config = json.loads(config_path.read_text())
+            if config.pop("default_site", None) is not None:
+                write_private_text(config_path, json.dumps(config, indent=1))
+        currentsite_path = self.bench.sites_path / "currentsite.txt"
+        currentsite_path.unlink(missing_ok=True)
 
     def write_pilot_communication_config(self, site: "Site") -> None:
         from admin.backend.auth import ensure_jwt_secret, issue_site_token

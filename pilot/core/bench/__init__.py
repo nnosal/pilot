@@ -116,11 +116,35 @@ class Bench:
         """Command prefix to invoke frappe's bench helper via the venv Python."""
         return [str(self.python), "-m", "frappe.utils.bench_helper"]
 
+    @cached_property
+    def supports_db_socket_option(self) -> bool:
+        """Whether this bench's `new-site`/`restore`/`reinstall` accept `--db-socket`.
+
+        Frappe v12 has no way to point those commands at a non-default MariaDB
+        socket at all (confirmed: no `--db-socket`/`--mariadb-db-socket` option in
+        its `frappe/commands/site.py`, only `--db-host`/`--db-port`/
+        `--no-mariadb-socket`) — added in a later version. Checking the actual
+        installed frappe source instead of guessing a version number keeps this
+        correct across every supported version, mirroring how mef's own overlay
+        system probes for pattern presence rather than branching on a version.
+        """
+        site_py = self.apps_path / "frappe" / "frappe" / "commands" / "site.py"
+        try:
+            return "--db-socket" in site_py.read_text()
+        except OSError:
+            return False
+
     @property
     def db_root_args(self) -> list[str]:
         from pilot.core.bench.config_files import BenchConfigFiles
 
         return BenchConfigFiles(self).db_root_args
+
+    @property
+    def drop_site_root_args(self) -> list[str]:
+        from pilot.core.bench.config_files import BenchConfigFiles
+
+        return BenchConfigFiles(self).drop_site_root_args
 
     @property
     def postgres_root_password(self) -> str:
