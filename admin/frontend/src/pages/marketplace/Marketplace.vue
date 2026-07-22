@@ -29,7 +29,8 @@
 
     <!-- Filters -->
     <MarketplaceFilters v-model:search="search" v-model:pill="selectedPill" v-model:works-with="worksWith"
-      :works-with-options="worksWithOptions" @add-from-github="showAddFromGithub = true" />
+      v-model:compatible-only="compatibleOnly" :works-with-options="worksWithOptions"
+      @add-from-github="showAddFromGithub = true" />
 
     <!-- Loading -->
     <div v-if="loading || error" class="flex flex-row justify-center items-center w-full h-[250px]">
@@ -114,6 +115,7 @@ const {
   search,
   selectedPill,
   worksWith,
+  compatibleOnly,
   worksWithOptions,
   isFiltered,
   filteredApps,

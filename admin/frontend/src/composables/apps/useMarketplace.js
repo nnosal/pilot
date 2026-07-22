@@ -48,6 +48,7 @@ export function useMarketplace(initialSiteName = '') {
   const search = ref('')
   const selectedPill = ref('All')
   const worksWith = ref('')
+  const compatibleOnly = ref(true)
 
   const sites = ref([])
   const currentSiteName = ref('')
@@ -116,6 +117,7 @@ export function useMarketplace(initialSiteName = '') {
       .filter((app) => matchesPill(app, selectedPill.value))
       .filter(matchesWorksWith)
       .filter((app) => matchesSearch(app, query))
+      .filter((app) => !compatibleOnly.value || app.is_installable)
       .map((app) => ({
         ...app,
         installed: installedOnCurrentSite.value.has(app.name),
@@ -158,6 +160,7 @@ export function useMarketplace(initialSiteName = '') {
     search,
     selectedPill,
     worksWith,
+    compatibleOnly,
     worksWithOptions,
     isFiltered,
     filteredApps,

@@ -56,6 +56,10 @@
 
         <ErrorMessage v-if="error" :message="error" />
 
+        <FormControl v-if="showManualName" label="App name" type="text" v-model="manualName"
+          description="Couldn't auto-detect this repository's app name - enter it yourself to import anyway."
+          placeholder="my_custom_app" />
+
         <div class="flex justify-end gap-2">
           <Button variant="subtle" @click="open = false">Cancel</Button>
           <Button variant="solid" :disabled="!canSubmit" :loading="adding" @click="submit">Import app</Button>
@@ -100,7 +104,18 @@ const error = ref('')
 
 const resolving = ref(false)
 const foundName = ref('')
-const canSubmit = computed(() => Boolean(repo.value.trim() && branch.value.trim() && foundName.value && !resolving.value))
+const manualName = ref('')
+const showManualName = computed(
+  () => !resolving.value && !foundName.value && Boolean(repo.value.trim() && branch.value.trim()),
+)
+const canSubmit = computed(() =>
+  Boolean(
+    repo.value.trim() &&
+      branch.value.trim() &&
+      (foundName.value || manualName.value.trim()) &&
+      !resolving.value,
+  ),
+)
 
 watch(open, (isOpen) => {
   if (isOpen) reset()
@@ -110,6 +125,7 @@ watch(repo, () => {
   fetched.value = false
   branches.value = []
   foundName.value = ''
+  manualName.value = ''
 })
 
 function reset() {
@@ -118,6 +134,7 @@ function reset() {
   fetched.value = false
   branches.value = []
   foundName.value = ''
+  manualName.value = ''
   error.value = ''
   if (tab.value === 'private' && !gitStatus.value) loadGitStatus()
 }
@@ -173,6 +190,7 @@ watch(branch, () => {
 async function resolveApp() {
   resolving.value = true
   foundName.value = ''
+  manualName.value = ''
   error.value = ''
   try {
     const d = await gitApi.resolve(repo.value.trim(), branch.value.trim())
@@ -190,7 +208,8 @@ async function submit() {
   adding.value = true
   error.value = ''
   try {
-    const result = await appsApi.add({ name: foundName.value, repo: repo.value.trim(), branch: branch.value.trim() })
+    const name = foundName.value || manualName.value.trim()
+    const result = await appsApi.add({ name, repo: repo.value.trim(), branch: branch.value.trim() })
     if (!result.task_id) throw new Error(apiErrorMessage(result, 'Could not import app.'))
     open.value = false
     openTaskDetailPage(router, result.task_id)

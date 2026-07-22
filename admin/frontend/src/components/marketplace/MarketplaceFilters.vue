@@ -24,21 +24,24 @@
       </div>
     </div>
 
-    <div class="flex flex-wrap gap-1.5 mt-3">
-      <button v-for="pill in PILLS" :key="pill" type="button"
-        class="px-3 py-0.5 border rounded-full text-p-sm transition duration-150 ease-[var(--ease-out)] active:scale-[0.97]"
-        :class="pill === pillModel
-          ? 'bg-surface-gray-3 border-outline-gray-2 text-ink-gray-9'
-          : 'border-outline-gray-2 text-ink-gray-6 hover:bg-surface-gray-1 hover:text-ink-gray-8'" @click="pillModel = pill">
-        {{ pill }}
-      </button>
+    <div class="flex flex-wrap justify-between items-center gap-1.5 mt-3">
+      <div class="flex flex-wrap gap-1.5">
+        <button v-for="pill in PILLS" :key="pill" type="button"
+          class="px-3 py-0.5 border rounded-full text-p-sm transition duration-150 ease-[var(--ease-out)] active:scale-[0.97]"
+          :class="pill === pillModel
+            ? 'bg-surface-gray-3 border-outline-gray-2 text-ink-gray-9'
+            : 'border-outline-gray-2 text-ink-gray-6 hover:bg-surface-gray-1 hover:text-ink-gray-8'" @click="pillModel = pill">
+          {{ pill }}
+        </button>
+      </div>
+      <Switch v-model="compatibleOnlyModel" label="Compatible only" class="shrink-0" />
     </div>
   </div>
 </template>
 
 <script setup>
 import { computed, h } from 'vue'
-import { Button, Dropdown, FormControl } from 'frappe-ui'
+import { Button, Dropdown, FormControl, Switch } from 'frappe-ui'
 import LucideSearch from '~icons/lucide/search'
 import GithubMark from '@/components/icons/GithubMark.vue'
 import { PILLS } from '@/utils/marketplaceCategories'
@@ -51,6 +54,7 @@ defineEmits(['add-from-github'])
 const searchModel = defineModel('search', { type: String })
 const pillModel = defineModel('pill', { type: String })
 const worksWithModel = defineModel('worksWith', { type: String })
+const compatibleOnlyModel = defineModel('compatibleOnly', { type: Boolean })
 
 function appLogo(option) {
   if (!option.logo_url) return null
