@@ -20,15 +20,19 @@ Design constraints (see .claude/plans/pilot-project-ui.md):
 from __future__ import annotations
 
 import contextlib
+import json
 import os
-import requests
 import shlex
+import shutil
+import socket
 import subprocess
 import threading
 import time
 import uuid
 from pathlib import Path
 
+import psutil
+import requests
 from flask import Blueprint, current_app, jsonify, request
 
 from admin.backend.api.responses import error_response
@@ -211,6 +215,64 @@ def delete_project(name: str):
     return jsonify({"job_id": job_id, "log_url": f"/api/v1/mef/jobs/{job_id}"}), 202
 
 
+@mef_bp.post("/mef/projects/<name>/resume")
+def resume_project(name: str):
+    """Re-run the setup pipeline (via ``mise r resume``) for a project whose
+    ``mise r new`` failed partway, from the project's own directory — not
+    re-running ``new`` itself, which would refuse: the directory already
+    exists. ``resume`` sets ``MEF_RESUME=1``, which makes ``site:new`` skip
+    an already-created site instead of erroring, ``apps:install`` skip
+    re-cloning an app whose directory already exists, and runs `bench migrate`
+    at the end to catch an app that registered itself installed before its
+    fixture/DocType sync actually finished.
+    """
+    gate = _gate()
+    if gate is not None:
+        return gate
+
+    if not _is_valid_project_name(name):
+        return error_response("invalid_project", f"'{name}' is not a valid project name.", 422)
+    if name in _PROTECTED_PROJECTS:
+        return error_response("invalid_project", f"'{name}' is protected.", 422)
+
+    target = _mef_root() / name
+    if not target.is_dir() or not (target / ".miserc.toml").is_file():
+        return error_response("project_not_found", f"Project '{name}' not found.", 404)
+
+    job_id = _spawn_job(
+        args=_mise_cmd(["resume"]),
+        env_extras={},
+        cwd=target,
+        label="resume",
+    )
+    return jsonify({"job_id": job_id, "log_url": f"/api/v1/mef/jobs/{job_id}"}), 202
+
+
+@mef_bp.get("/mef/projects/<name>/doctor")
+def doctor_project(name: str):
+    """Diagnose a project's daemons/ports without touching anything.
+
+    Surfaces the two failure shapes this admin can't tell apart from
+    ``pitchfork list`` alone: a daemon pitchfork thinks is running but whose
+    tracked PID doesn't actually own the port it's supposed to serve (an
+    orphaned sibling process is squatting it instead — the "phantom daemon"
+    class of bug), and a bench that's up but whose site doesn't answer
+    ``frappe.ping`` (wrong frappe version/broken app install).
+    """
+    gate = _gate()
+    if gate is not None:
+        return gate
+
+    if not _is_valid_project_name(name):
+        return error_response("invalid_project", f"'{name}' is not a valid project name.", 422)
+
+    target = _mef_root() / name
+    if not target.is_dir() or not (target / ".miserc.toml").is_file():
+        return error_response("project_not_found", f"Project '{name}' not found.", 404)
+
+    return jsonify(_run_doctor(target, name))
+
+
 @mef_bp.post("/mef/projects/<name>/pilot-up")
 def pilot_up(name: str):
     """Start the pilot admin daemon for a sibling project.
@@ -297,13 +359,12 @@ def project_auto_login_token(name: str):
         )
         if response.status_code == 200:
             return jsonify(response.json())
-        else:
-            return error_response(
-                "auto_login_failed",
-                f"Failed to get auto-login token from project '{name}'.",
-                response.status_code,
-            )
-    except requests.RequestException as e:
+        return error_response(
+            "auto_login_failed",
+            f"Failed to get auto-login token from project '{name}'.",
+            response.status_code,
+        )
+    except requests.RequestException:
         return error_response(
             "auto_login_failed",
             f"Could not reach project '{name}' on port {pilot_port}. Ensure pilot is running.",
@@ -514,6 +575,100 @@ def _is_valid_project_name(name: str) -> bool:
     if name.startswith(".") or name in _PROTECTED_PROJECTS:
         return False
     return True
+
+
+_DOCTOR_PORT_KEYS = {
+    "bench": "WEB_PORT",
+    "redis": "REDIS_PORT",
+    "mailpit": "MAILPIT_UI_PORT",
+}
+
+
+def _run_doctor(target: Path, name: str) -> dict:
+    env = _read_project_env(target)
+    daemons = _pitchfork_daemon_pids(name)
+
+    port_map = dict(_DOCTOR_PORT_KEYS)
+    ports: dict[str, dict] = {}
+    for daemon, env_key in port_map.items():
+        raw_port = env.get(env_key)
+        if not raw_port:
+            continue
+        ports[daemon] = _check_port(daemon, int(raw_port), daemons.get(daemon))
+    pilot_pid = daemons.get("pilot-admin")
+    ports["pilot-admin"] = _check_port("pilot-admin", _pilot_port_from_name(name), pilot_pid)
+
+    frappe_ping = None
+    bench = daemons.get("bench")
+    site_domain, web_port = env.get("SITE_DOMAIN"), env.get("WEB_PORT")
+    if bench and bench.get("status") == "running" and site_domain and web_port:
+        frappe_ping = _ping_frappe(site_domain, int(web_port))
+
+    return {"project": name, "daemons": daemons, "ports": ports, "frappe_ping": frappe_ping}
+
+
+def _pitchfork_daemon_pids(name: str) -> dict[str, dict]:
+    """``{daemon: {status, pid}}`` for one project's daemons, via ``pitchfork list --json``."""
+    pitchfork = shutil.which("pitchfork")
+    if not pitchfork:
+        return {}
+    try:
+        result = subprocess.run(
+            [pitchfork, "list", "--json"], capture_output=True, text=True, timeout=5, check=False
+        )
+        entries = json.loads(result.stdout or "[]")
+    except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError):
+        return {}
+    return {
+        entry["name"]: {"status": entry.get("status"), "pid": entry.get("pid")}
+        for entry in entries
+        if entry.get("namespace") == name and entry.get("name")
+    }
+
+
+def _check_port(daemon: str, port: int, tracked: dict | None) -> dict:
+    reachable = _port_reachable(port)
+    pid = tracked.get("pid") if tracked else None
+    owned = _pid_owns_port(pid, port) if pid else None
+    return {
+        "port": port,
+        "reachable": reachable,
+        "owned_by_tracked_pid": owned,
+        # Something answers the port, but the daemon pitchfork tracks for it either
+        # isn't running or doesn't actually hold it — a stray sibling process (e.g.
+        # a not-fully-reaped restart) is squatting the port instead.
+        "orphan_suspected": reachable and owned is False,
+    }
+
+
+def _port_reachable(port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(0.5)
+        return sock.connect_ex(("127.0.0.1", port)) == 0
+
+
+def _pid_owns_port(pid: int, port: int) -> bool | None:
+    """True/False if determinable, None if the PID's own sockets aren't inspectable."""
+    try:
+        proc = psutil.Process(pid)
+        return any(
+            conn.status == psutil.CONN_LISTEN and conn.laddr and conn.laddr.port == port
+            for conn in proc.net_connections(kind="inet")
+        )
+    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+        return None
+
+
+def _ping_frappe(site_domain: str, port: int) -> dict:
+    try:
+        response = requests.get(
+            f"http://127.0.0.1:{port}/api/method/frappe.ping",
+            headers={"Host": site_domain},
+            timeout=2,
+        )
+        return {"ok": response.status_code == 200, "status": response.status_code, "body": response.text[:500]}
+    except requests.RequestException as exc:
+        return {"ok": False, "error": str(exc)}
 
 
 def _pilot_port_from_name(name: str) -> int:

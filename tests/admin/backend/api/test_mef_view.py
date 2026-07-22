@@ -323,6 +323,124 @@ def test_create_strips_inherited_mise_env_vars(tmp_path: Path, monkeypatch: pyte
     assert captured["env"]["SOME_UNRELATED_VAR"] == "keep-me"
 
 
+def test_resume_spawns_headless_mise_resume_in_project_dir(tmp_path: Path) -> None:
+    bench_root = tmp_path / "host" / "app"
+    mef_root = bench_root.parent.parent
+    target = mef_root / "stuck"
+    target.mkdir()
+    (target / ".miserc.toml").write_text('env = ["v12"]\n')
+
+    _, client = _client(bench_root, allow_mef=True)
+
+    captured: dict = {}
+
+    def fake_popen(args, cwd, env, stdout, stderr, start_new_session):
+        captured["args"] = args
+        captured["cwd"] = cwd
+        return _stub_popen(returncode=0)(args, cwd, env, stdout, stderr, start_new_session)
+
+    with patch("admin.backend.api.v1.mef.subprocess.Popen", side_effect=fake_popen):
+        response = client.post("/api/v1/mef/projects/stuck/resume")
+
+    assert response.status_code == 202
+    assert response.get_json()["job_id"].startswith("resume-")
+    assert captured["args"][1:4] == ["r", "resume"]
+    # Scoped to the project's own dir, not the mef root — same reasoning as pilot-up/down.
+    assert captured["cwd"] == str(target)
+
+
+def test_resume_rejects_unknown_project(tmp_path: Path) -> None:
+    bench_root = tmp_path / "host" / "app"
+    _, client = _client(bench_root, allow_mef=True)
+
+    response = client.post("/api/v1/mef/projects/ghost/resume")
+
+    assert response.status_code == 404
+    assert response.get_json()["error"]["code"] == "project_not_found"
+
+
+def test_doctor_rejects_unknown_project(tmp_path: Path) -> None:
+    bench_root = tmp_path / "host" / "app"
+    _, client = _client(bench_root, allow_mef=True)
+
+    response = client.get("/api/v1/mef/projects/ghost/doctor")
+
+    assert response.status_code == 404
+    assert response.get_json()["error"]["code"] == "project_not_found"
+
+
+def test_doctor_flags_orphan_when_reachable_but_pid_mismatch(tmp_path: Path) -> None:
+    """The "phantom daemon" bug from this session: pitchfork's tracked PID for a
+    daemon no longer owns the port (a not-fully-reaped restart left a stray sibling
+    process squatting it) — the port answers, but the tracked PID doesn't hold it."""
+    bench_root = tmp_path / "host" / "app"
+    mef_root = bench_root.parent.parent
+    target = mef_root / "flaky"
+    target.mkdir()
+    (target / ".miserc.toml").write_text('env = ["v12"]\n')
+    (target / ".env").write_text("WEB_PORT=8039\nREDIS_PORT=6436\nSITE_DOMAIN=flaky.localhost\n")
+
+    _, client = _client(bench_root, allow_mef=True)
+
+    pitchfork_json = [
+        {"namespace": "flaky", "name": "bench", "status": "running", "pid": 111},
+        {"namespace": "flaky", "name": "redis", "status": "running", "pid": 222},
+        {"namespace": "other-project", "name": "bench", "status": "running", "pid": 999},
+    ]
+
+    class FakeCompleted:
+        stdout = __import__("json").dumps(pitchfork_json)
+
+    class FakeConn:
+        def __init__(self, port):
+            self.status = "LISTEN"
+            self.laddr = type("Addr", (), {"port": port})()
+
+    class FakeProcess:
+        def __init__(self, pid):
+            self.pid = pid
+
+        def net_connections(self, kind="inet"):
+            # pid 111 (bench) doesn't actually hold 8039 -> orphan_suspected
+            # pid 222 (redis) correctly holds 6436 -> no orphan
+            return [FakeConn(6436)] if self.pid == 222 else []
+
+    def fake_connect_ex(self, addr):
+        # Both ports answer (something is listening), regardless of who.
+        return 0
+
+    class FakePingResponse:
+        status_code = 200
+        text = '{"message":"pong"}'
+
+    with (
+        patch("admin.backend.api.v1.mef.subprocess.run", return_value=FakeCompleted()),
+        patch("admin.backend.api.v1.mef.psutil.Process", side_effect=FakeProcess),
+        patch("admin.backend.api.v1.mef.socket.socket.connect_ex", fake_connect_ex),
+        patch("admin.backend.api.v1.mef.requests.get", return_value=FakePingResponse()) as ping,
+    ):
+        response = client.get("/api/v1/mef/projects/flaky/doctor")
+
+    # bench is "running" with a site_domain/web_port -> doctor pings frappe.ping too.
+    ping.assert_called_once()
+    assert ping.call_args.kwargs["headers"] == {"Host": "flaky.localhost"}
+
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["daemons"]["bench"] == {"status": "running", "pid": 111}
+    # "other-project"'s daemon must not leak into "flaky"'s report.
+    assert set(body["daemons"]) == {"bench", "redis"}
+
+    assert body["ports"]["bench"]["reachable"] is True
+    assert body["ports"]["bench"]["owned_by_tracked_pid"] is False
+    assert body["ports"]["bench"]["orphan_suspected"] is True
+
+    assert body["ports"]["redis"]["owned_by_tracked_pid"] is True
+    assert body["ports"]["redis"]["orphan_suspected"] is False
+
+    assert body["frappe_ping"] == {"ok": True, "status": 200, "body": '{"message":"pong"}'}
+
+
 def test_delete_spawns_headless_mise_delete_with_confirm(tmp_path: Path) -> None:
     bench_root = tmp_path / "host" / "app"
     mef_root = bench_root.parent.parent

@@ -10,7 +10,15 @@
             <span v-if="currentStep" class="text-ink-gray-5 font-mono">{{ currentStep }}</span>
             <span class="text-ink-gray-5">exit code: {{ job?.exit_code ?? '—' }}</span>
           </div>
-          <Button variant="ghost" size="sm" @click="open = false">Close</Button>
+          <div class="flex items-center gap-2">
+            <Button v-if="isFailed" variant="outline" size="sm" :loading="resuming" @click="resume">
+              Resume
+            </Button>
+            <Button v-if="isFailed" variant="outline" size="sm" :loading="doctoring" @click="runDoctor">
+              Doctor
+            </Button>
+            <Button variant="ghost" size="sm" @click="open = false">Close</Button>
+          </div>
         </div>
         <ErrorMessage v-if="error" :message="error" />
         <LogView
@@ -18,6 +26,30 @@
           :streaming="job?.status === 'running'"
           empty-text="Waiting for output…"
         />
+
+        <!-- Doctor result: daemon/port health for the (partially) created project -->
+        <div v-if="doctorResult" class="space-y-2 bg-surface-gray-1 p-3 rounded border border-outline-gray-2 text-p-sm">
+          <p class="font-medium text-ink-gray-8">Doctor — {{ doctorResult.project }}</p>
+          <div v-if="doctorError" class="text-ink-red-4">{{ doctorError }}</div>
+          <template v-else>
+            <div v-for="(check, daemon) in doctorResult.ports" :key="daemon" class="flex items-center gap-2">
+              <Badge
+                size="sm"
+                :theme="check.orphan_suspected ? 'orange' : check.reachable ? 'green' : 'gray'"
+                :label="daemonLabel(daemon, doctorResult.daemons[daemon])"
+              />
+              <span class="text-ink-gray-6">:{{ check.port }}</span>
+              <span v-if="check.orphan_suspected" class="text-ink-orange-5">
+                reachable but tracked PID doesn't own it — likely an orphaned process, try Resume
+              </span>
+              <span v-else-if="!check.reachable" class="text-ink-gray-5">not reachable</span>
+            </div>
+            <div v-if="doctorResult.frappe_ping" class="flex items-center gap-2">
+              <Badge size="sm" :theme="doctorResult.frappe_ping.ok ? 'green' : 'red'" label="frappe.ping" />
+              <span class="text-ink-gray-6">{{ doctorResult.frappe_ping.ok ? 'pong' : (doctorResult.frappe_ping.error || `HTTP ${doctorResult.frappe_ping.status}`) }}</span>
+            </div>
+          </template>
+        </div>
       </div>
 
       <!-- Form -->
@@ -203,6 +235,7 @@ const STATUS_META = {
 // mid-run, backend restarted) the exit_code is gone, but this marker in the
 // last log we did receive is still a reliable signal that it failed.
 const logIndicatesFailure = computed(() => /\]\s+ERROR task failed\s*$/m.test(job.value?.log || ''))
+const isFailed = computed(() => job.value?.status === 'failed' || logIndicatesFailure.value)
 const statusLabel = computed(() => {
   if (STATUS_META[job.value?.status]) return STATUS_META[job.value.status].label
   if (logIndicatesFailure.value) return 'Failed (from log)'
@@ -249,11 +282,67 @@ watch(open, (visible) => {
     submitting.value = false
     jobId.value = null
     job.value = null
+    resuming.value = false
+    doctoring.value = false
+    doctorResult.value = null
+    doctorError.value = ''
     return
   }
 })
 
 onBeforeUnmount(stopPolling)
+
+const resuming = ref(false)
+const doctoring = ref(false)
+const doctorResult = ref(null)
+const doctorError = ref('')
+
+const DAEMON_META = { bench: 'bench', redis: 'redis', mailpit: 'mailpit', 'pilot-admin': 'pilot-admin' }
+function daemonLabel(daemon, tracked) {
+  const status = tracked?.status || 'not tracked'
+  return `${DAEMON_META[daemon] || daemon} — ${status}`
+}
+
+async function resume() {
+  resuming.value = true
+  error.value = ''
+  doctorResult.value = null
+  try {
+    const result = await mefApi.resumeProject(form.directory)
+    if (!result.job_id) {
+      error.value = apiErrorMessage(result, 'Could not resume project creation.')
+      return
+    }
+    stopPolling()
+    job.value = null
+    jobId.value = result.job_id
+    pollErrorCount = 0
+    setTimeout(pollJob, 500)
+  } catch (caught) {
+    error.value = caught.message || 'Could not resume project creation.'
+  } finally {
+    resuming.value = false
+  }
+}
+
+async function runDoctor() {
+  doctoring.value = true
+  doctorError.value = ''
+  try {
+    const result = await mefApi.doctorProject(form.directory)
+    if (result.error) {
+      doctorError.value = apiErrorMessage(result, 'Could not run doctor.')
+      doctorResult.value = { project: form.directory }
+      return
+    }
+    doctorResult.value = result
+  } catch (caught) {
+    doctorError.value = caught.message || 'Could not run doctor.'
+    doctorResult.value = { project: form.directory }
+  } finally {
+    doctoring.value = false
+  }
+}
 
 function stopPolling() {
   if (pollTimer) {

@@ -4,6 +4,10 @@ export const mefApi = {
   listProjects: () => request.get('mef/projects').json(),
   createProject: (payload) => request.post('mef/projects', { json: payload }).json(),
   deleteProject: (name) => request.delete(`mef/projects/${encodeURIComponent(name)}`).json(),
+  resumeProject: (name) =>
+    request.post(`mef/projects/${encodeURIComponent(name)}/resume`).json(),
+  doctorProject: (name) =>
+    request.get(`mef/projects/${encodeURIComponent(name)}/doctor`).json(),
   pilotUp: (name) =>
     request.post(`mef/projects/${encodeURIComponent(name)}/pilot-up`).json(),
   pilotDown: (name) =>
