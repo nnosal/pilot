@@ -221,10 +221,13 @@ def resume_project(name: str):
     ``mise r new`` failed partway, from the project's own directory — not
     re-running ``new`` itself, which would refuse: the directory already
     exists. ``resume`` sets ``MEF_RESUME=1``, which makes ``site:new`` skip
-    an already-created site instead of erroring, ``apps:install`` skip
-    re-cloning an app whose directory already exists, and runs `bench migrate`
-    at the end to catch an app that registered itself installed before its
-    fixture/DocType sync actually finished.
+    an already-created site instead of erroring, and ``apps:install`` skip
+    re-cloning an app whose directory already exists (a bench build/get-app
+    failure otherwise leaves it half-cloned, and a plain retry aborts on
+    "directory already exists"). Does not force a ``bench migrate`` — that
+    was tried and reverted: it replays every fixture on the site, including
+    ones with environment-dependent validation (e.g. Email Account tests a
+    real SMTP connection), and broke an otherwise-healthy project in testing.
     """
     gate = _gate()
     if gate is not None:
