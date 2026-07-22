@@ -65,6 +65,16 @@
           description="Comma-separated app names; passed through to apps.json."
         />
 
+        <!-- Custom apps (arbitrary git repos, not in the catalog) -->
+        <FormControl
+          v-model="form.custom_apps"
+          label="Custom apps"
+          type="textarea"
+          :rows="2"
+          placeholder="git@gitlab.com:org/myapp|branch|myapp"
+          description="One per line: url|branch|name (name optional, deduced from url). Fetched in addition to the apps preset above."
+        />
+
         <!-- Run setup -->
         <label class="flex items-center gap-2 cursor-pointer select-none">
           <Checkbox :model-value="form.new_run_setup" @update:model-value="form.new_run_setup = $event" />
@@ -155,6 +165,7 @@ const form = reactive({
   db_engine: 'mariadb',
   overlays: '',
   apps_preset: '',
+  custom_apps: '',
   new_run_setup: true,
   new_run_wizard: false,
   ...WIZARD_DEFAULTS,
@@ -229,6 +240,7 @@ watch(open, (visible) => {
       db_engine: 'mariadb',
       overlays: '',
       apps_preset: '',
+      custom_apps: '',
       new_run_setup: true,
       new_run_wizard: false,
       ...WIZARD_DEFAULTS,
@@ -306,6 +318,8 @@ function buildPayload() {
   if (overlays.length) payload.overlays = overlays
   const apps = form.apps_preset.split(',').map((s) => s.trim()).filter(Boolean)
   if (apps.length) payload.apps_preset = apps.join(',')
+  const customApps = form.custom_apps.split('\n').map((s) => s.trim()).filter(Boolean)
+  if (customApps.length) payload.custom_apps = customApps.join(';')
   if (form.new_run_setup) {
     payload.new_run_setup = 1
     if (form.new_run_wizard) {
