@@ -121,7 +121,13 @@ export function useMarketplace(initialSiteName = '') {
         installed: installedOnCurrentSite.value.has(app.name),
         compatible: app.is_installable,
         needs: app.required_version,
-        label: app.version ? `v${app.version}` : '',
+        // Backend falls back to an arbitrary target's version when nothing
+        // matches this bench's Frappe version (pilot/integrations/marketplace.py
+        // read_all_apps) - that version isn't meaningful here, showing it next
+        // to the title reads as "this is the version you'd get". Only label
+        // apps this bench can actually install; the incompatible-app dialog
+        // already surfaces the real requirement via `needs`.
+        label: app.is_installable && app.version ? `v${app.version}` : '',
       }))
   })
 

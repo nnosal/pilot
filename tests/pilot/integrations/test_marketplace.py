@@ -1,5 +1,6 @@
 """Tests for pilot.integrations.marketplace - Resolver and Marketplace classes."""
 
+import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -537,3 +538,118 @@ def test_find_app_raises_for_unknown_app():
     mp = make_marketplace("15.0.0")
     with pytest.raises(BenchError, match="'unknown_app' not found in marketplace"):
         mp.find_app("unknown_app")
+
+
+OLD_APP_ONLY_REGISTRY = [
+    {
+        "name": "old_app",
+        "repo": "https://github.com/frappe/old_app",
+        "title": "Old App",
+        "description": "",
+        "logo_url": "",
+        "category": "Utilities",
+        "stars": 10,
+        "targets": [
+            {
+                "target_type": "branch",
+                "target": "version-14",
+                "version": "14.0.0",
+                "frappe_core": ">=14.0.0,<15.0.0",
+                "dependencies": {},
+            },
+        ],
+    },
+]
+
+
+@pytest.fixture(autouse=True)
+def _clear_frappeverse_cache():
+    """The catalog is lru_cache'd across the whole process - reset it around
+    every test so a mocked catalog in one test can't leak into the next."""
+    Marketplace._frappeverse_catalog.cache_clear()
+    yield
+    Marketplace._frappeverse_catalog.cache_clear()
+
+
+def test_frappeverse_fallback_fills_gap_registry_has_no_target_for():
+    """erpnext/hrms's official registry entries only cover v15+ - a hand-curated
+    supplemental catalog (apps_frappeverse.json) confirms these apps still ship
+    real version-N branches for older Frappe majors the registry dropped."""
+    with patch.object(
+        Marketplace, "_frappeverse_catalog", return_value={"old_app": ["12", "13"]}
+    ):
+        mp = make_marketplace("12.5.0", OLD_APP_ONLY_REGISTRY)
+        old_app = next(a for a in mp.read_all_apps() if a.app == "old_app")
+
+    assert old_app.is_installable is True
+    assert old_app.target == "version-12"
+    assert old_app.target_type == "branch"
+
+
+def test_frappeverse_fallback_not_used_when_registry_already_compatible():
+    """The official registry stays authoritative when it already has a match -
+    the supplemental catalog only fills gaps, never overrides."""
+    with patch.object(
+        Marketplace, "_frappeverse_catalog", return_value={"erpnext": ["12"]}
+    ):
+        mp = make_marketplace("15.0.0")
+        erpnext = next(a for a in mp.read_all_apps() if a.app == "erpnext")
+
+    assert erpnext.target == "version-15"
+
+
+def test_frappeverse_fallback_absent_when_app_not_in_catalog():
+    with patch.object(Marketplace, "_frappeverse_catalog", return_value={}):
+        mp = make_marketplace("17.0.0", OLD_APP_ONLY_REGISTRY)
+        old_app = next(a for a in mp.read_all_apps() if a.app == "old_app")
+
+    assert old_app.is_installable is False
+    assert old_app.target == "version-14"
+
+
+def test_frappeverse_fallback_absent_when_version_not_in_apps_list():
+    with patch.object(
+        Marketplace, "_frappeverse_catalog", return_value={"old_app": ["15", "16"]}
+    ):
+        mp = make_marketplace("12.5.0", OLD_APP_ONLY_REGISTRY)
+        old_app = next(a for a in mp.read_all_apps() if a.app == "old_app")
+
+    assert old_app.is_installable is False
+
+
+def test_frappeverse_catalog_walks_nested_app_available(tmp_path):
+    catalog_data = [
+        {
+            "name": "frappe",
+            "frappe_versions": [],
+            "app_available": [
+                {
+                    "name": "erpnext",
+                    "frappe_versions": ["12", "13", "14", "15", "16"],
+                    "app_available": [
+                        {"name": "hrms", "frappe_versions": ["14", "15", "16"]},
+                    ],
+                },
+            ],
+        },
+    ]
+    catalog_path = tmp_path / "apps_frappeverse.json"
+    catalog_path.write_text(json.dumps(catalog_data))
+
+    with patch("pilot.utils.cli_root", return_value=tmp_path / "pilot"):
+        catalog = Marketplace._frappeverse_catalog()
+
+    assert catalog["erpnext"] == ["12", "13", "14", "15", "16"]
+    assert catalog["hrms"] == ["14", "15", "16"]
+    assert "frappe" not in catalog  # empty frappe_versions list - nothing to match against
+
+
+def test_frappeverse_catalog_missing_file_returns_empty(tmp_path):
+    with patch("pilot.utils.cli_root", return_value=tmp_path / "pilot"):
+        assert Marketplace._frappeverse_catalog() == {}
+
+
+def test_frappeverse_catalog_invalid_json_returns_empty(tmp_path):
+    (tmp_path / "apps_frappeverse.json").write_text("not json")
+    with patch("pilot.utils.cli_root", return_value=tmp_path / "pilot"):
+        assert Marketplace._frappeverse_catalog() == {}

@@ -161,6 +161,56 @@ class Marketplace:
         except InvalidSpecifier:
             return None
 
+    @staticmethod
+    @lru_cache(maxsize=1)
+    def _frappeverse_catalog() -> dict[str, list[str]]:
+        """Best-effort app -> supported major Frappe versions, from a hand-curated
+        sibling catalog (../apps_frappeverse.json, next to this checkout's own
+        root - this pilot is meant to run from a mef-style .config/pilot layout).
+
+        The official marketplace registry (registry-cache/apps.json, a shallow
+        clone of github.com/frappe/marketplace) stopped carrying targets for
+        Frappe 12-14: apps like erpnext/hrms still ship real version-12..
+        version-16 branches upstream, the registry just no longer lists them.
+        Any read/parse failure here just means no supplemental data - this file
+        won't exist for anyone running pilot outside this repo, and that's not
+        an error.
+        """
+        from pilot.utils import cli_root
+
+        catalog: dict[str, list[str]] = {}
+        try:
+            raw = json.loads((cli_root().parent / "apps_frappeverse.json").read_text())
+        except (OSError, json.JSONDecodeError):
+            return catalog
+
+        def walk(entries: object) -> None:
+            if not isinstance(entries, list):
+                return
+            for entry in entries:
+                name, versions = entry.get("name"), entry.get("frappe_versions")
+                if name and versions:
+                    catalog[name] = [str(v) for v in versions]
+                walk(entry.get("app_available"))
+                walk(entry.get("other_app_available"))
+
+        walk(raw)
+        return catalog
+
+    @classmethod
+    def _frappeverse_fallback_target(cls, app_name: str, current_frappe: Version) -> dict | None:
+        versions = cls._frappeverse_catalog().get(app_name)
+        major = current_frappe.major
+        if not versions or str(major) not in versions:
+            return None
+        return {
+            "version": str(major),
+            "target_type": "branch",
+            "target": f"version-{major}",
+            "frappe_core": f">={major}.0.0,<{major + 1}.0.0",
+            "dependencies": {},
+        }
+
     def _make_resolver(self, app: dict, target: dict, is_installable: bool) -> "Resolver":
         return Resolver(
             app=app["name"],
@@ -190,6 +240,10 @@ class Marketplace:
         for app in self._registry:
             targets = app.get("targets") or []
             compatible_targets = [t for t in targets if t["_spec"] and current_frappe in t["_spec"]]
+            if not compatible_targets:
+                fallback = self._frappeverse_fallback_target(app["name"], current_frappe)
+                if fallback:
+                    compatible_targets = [fallback]
             best_match = compatible_targets[0] if compatible_targets else None
             display_target = best_match or (targets[0] if targets else {})
 
