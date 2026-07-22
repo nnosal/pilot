@@ -47,18 +47,72 @@ def _bench_execute(bench_root: Path, name: str, method: str, args_json: str) -> 
     )
 
 
+def _run_db_method(bench_root: Path, name: str, method: str, args_json: str) -> subprocess.CompletedProcess:
+    """Call `frappe.db.<method>(*args)` directly via the site's venv Python.
+
+    `bench execute frappe.db.<method>` resolves the dotted path through
+    `frappe.get_attr` -> `importlib.import_module`, and `frappe.db` isn't a real
+    importable submodule — only a runtime attribute `frappe.connect()` sets up. That
+    fails on Frappe v12 (confirmed: v12's `execute` command has no fallback). Frappe
+    v13+ added a fallback that `eval()`s the expression instead, which happens to work
+    for a runtime attribute — but relying on that is version-fragile. Evaluating
+    `frappe.db.<method>` as a plain attribute access here sidesteps the import
+    machinery entirely, so it works identically on every supported version.
+    """
+    python = bench_root / "env" / "bin" / "python"
+    program = (
+        "import sys, json, frappe\n"
+        "frappe.init(site=sys.argv[1], sites_path='.')\n"
+        "frappe.connect()\n"
+        f"result = frappe.db.{method}(*json.loads(sys.argv[2]))\n"
+        "frappe.db.commit()\n"
+        "sys.stdout.write(json.dumps(result))\n"
+    )
+    return subprocess.run(
+        [str(python), "-c", program, name, args_json],
+        cwd=str(bench_root / "sites"),
+        capture_output=True,
+        text=True,
+        timeout=_BENCH_EXECUTE_TIMEOUT_SECONDS,
+        check=False,
+    )
+
+
+def _run_db_method_kwargs(bench_root: Path, name: str, method: str, kwargs_json: str) -> subprocess.CompletedProcess:
+    """Same rationale as `_run_db_method`, for a `frappe.db.<method>(**kwargs)` call."""
+    python = bench_root / "env" / "bin" / "python"
+    program = (
+        "import sys, json, frappe\n"
+        "frappe.init(site=sys.argv[1], sites_path='.')\n"
+        "frappe.connect()\n"
+        f"result = frappe.db.{method}(**json.loads(sys.argv[2]))\n"
+        "frappe.db.commit()\n"
+        "sys.stdout.write(json.dumps(result))\n"
+    )
+    return subprocess.run(
+        [str(python), "-c", program, name, kwargs_json],
+        cwd=str(bench_root / "sites"),
+        capture_output=True,
+        text=True,
+        timeout=_BENCH_EXECUTE_TIMEOUT_SECONDS,
+        check=False,
+    )
+
+
 def _read_setup_complete(bench_root: Path, name: str) -> bool | None:
     try:
-        result = _bench_execute(
-            bench_root, name, "frappe.db.get_single_value", '["System Settings", "setup_complete"]'
-        )
+        result = _run_db_method(bench_root, name, "get_single_value", '["System Settings", "setup_complete"]')
     except (OSError, subprocess.TimeoutExpired):
         return None
     if result.returncode != 0:
         return None
     lines = [line for line in result.stdout.strip().splitlines() if line.strip()]
-    last = lines[-1] if lines else ""
-    return last in ("1", "True")
+    if not lines:
+        return None
+    try:
+        return bool(json.loads(lines[-1]))
+    except ValueError:
+        return None
 
 
 @sites_bp.post("/<name>/wizard/reset")
@@ -93,13 +147,10 @@ def reset_wizard(name: str):
         return site_not_found()
     try:
         for method, args_json in (
-            ("frappe.db.set_single_value", '["System Settings", "setup_complete", 0]'),
-            (
-                "frappe.db.set_value",
-                '["Installed Application", {"is_setup_complete": 1}, "is_setup_complete", 0]',
-            ),
+            ("set_single_value", '["System Settings", "setup_complete", 0]'),
+            ("set_value", '["Installed Application", {"is_setup_complete": 1}, "is_setup_complete", 0]'),
         ):
-            result = _bench_execute(bench_root, name, method, args_json)
+            result = _run_db_method(bench_root, name, method, args_json)
             if result.returncode != 0:
                 return error_response("reset_failed", result.stderr.strip() or "bench execute failed", 502)
         cache_key = "document_cache::Installed Applications::Installed Applications"
@@ -155,32 +206,40 @@ def wizard_options(name: str):
     return jsonify(_WIZARD_OPTIONS_CACHE[cache_key])
 
 
-def _fetch_wizard_options(bench_root: Path, name: str) -> dict | None:
-    calls = (
-        ("frappe.geo.country_info.get_country_timezone_info", "{}"),
-        (
-            "frappe.db.get_list",
-            '{"doctype": "Currency", "fields": ["name"], "limit_page_length": 0, "order_by": "name"}',
-        ),
-        (
-            "frappe.db.get_list",
-            '{"doctype": "Language", "fields": ["language_name"], "limit_page_length": 0, "order_by": "language_name"}',
-        ),
-    )
-    results = []
-    for method, kwargs_json in calls:
-        result = _bench_execute_kwargs(bench_root, name, method, kwargs_json)
-        if result.returncode != 0:
-            return None
-        lines = [line for line in result.stdout.strip().splitlines() if line.strip()]
-        if not lines:
-            return None
-        try:
-            results.append(json.loads(lines[-1]))
-        except ValueError:
-            return None
+def _read_json_result(result: subprocess.CompletedProcess) -> object | None:
+    if result.returncode != 0:
+        return None
+    lines = [line for line in result.stdout.strip().splitlines() if line.strip()]
+    if not lines:
+        return None
+    try:
+        return json.loads(lines[-1])
+    except ValueError:
+        return None
 
-    country_timezone_info, currencies, languages = results
+
+def _fetch_wizard_options(bench_root: Path, name: str) -> dict | None:
+    # get_country_timezone_info is a real importable module (frappe.geo.country_info),
+    # so bench execute resolves it fine on every version - unlike frappe.db.get_list,
+    # which needs _run_db_method_kwargs (see its docstring).
+    country_timezone_info = _read_json_result(
+        _bench_execute_kwargs(bench_root, name, "frappe.geo.country_info.get_country_timezone_info", "{}")
+    )
+    currencies = _read_json_result(
+        _run_db_method_kwargs(
+            bench_root, name, "get_list", '{"doctype": "Currency", "fields": ["name"], "limit_page_length": 0, "order_by": "name"}'
+        )
+    )
+    languages = _read_json_result(
+        _run_db_method_kwargs(
+            bench_root,
+            name,
+            "get_list",
+            '{"doctype": "Language", "fields": ["language_name"], "limit_page_length": 0, "order_by": "language_name"}',
+        )
+    )
+    if country_timezone_info is None or currencies is None or languages is None:
+        return None
     country_info = country_timezone_info["country_info"]
     return {
         "languages": sorted({row["language_name"] for row in languages}),

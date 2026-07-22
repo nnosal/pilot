@@ -25,34 +25,36 @@ def test_setup_status_404_when_site_missing(tmp_path: Path) -> None:
     assert response.status_code == 404
 
 
-def test_setup_status_parses_bench_execute_output(tmp_path: Path) -> None:
+def test_setup_status_parses_db_call_output(tmp_path: Path) -> None:
+    """setup-status runs frappe.db.get_single_value via the venv Python directly, not
+    `bench execute` — that fails on Frappe v12 (frappe.db isn't a real importable
+    submodule there, only a runtime attribute; see _run_db_method's docstring)."""
     bench_root = tmp_path / "app"
     client = _client(bench_root)
     _write_site(bench_root)
 
     completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="1\n", stderr="")
-    with (
-        patch("admin.backend.api.v1.sites.wizard.shutil.which", return_value="/usr/bin/bench"),
-        patch("admin.backend.api.v1.sites.wizard.subprocess.run", return_value=completed) as run,
-    ):
+    with patch("admin.backend.api.v1.sites.wizard.subprocess.run", return_value=completed) as run:
         response = client.get("/api/v1/sites/s.localhost/setup-status")
 
     assert response.status_code == 200
     assert response.get_json()["setup_complete"] is True
     args = run.call_args.args[0]
-    assert args[:3] == ["/usr/bin/bench", "--site", "s.localhost"]
+    assert args[0] == str(bench_root / "env" / "bin" / "python")
+    assert args[1] == "-c"
+    assert args[3] == "s.localhost"
+    # frappe.init(sites_path='.') resolves relative to cwd - must be bench_root/sites,
+    # not bench_root, or "Site s.localhost does not exist" (caught live, see commit).
+    assert run.call_args.kwargs["cwd"] == str(bench_root / "sites")
 
 
-def test_setup_status_none_when_bench_execute_fails(tmp_path: Path) -> None:
+def test_setup_status_none_when_db_call_fails(tmp_path: Path) -> None:
     bench_root = tmp_path / "app"
     client = _client(bench_root)
     _write_site(bench_root)
 
     completed = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="boom")
-    with (
-        patch("admin.backend.api.v1.sites.wizard.shutil.which", return_value="/usr/bin/bench"),
-        patch("admin.backend.api.v1.sites.wizard.subprocess.run", return_value=completed),
-    ):
+    with patch("admin.backend.api.v1.sites.wizard.subprocess.run", return_value=completed):
         response = client.get("/api/v1/sites/s.localhost/setup-status")
 
     assert response.status_code == 200
