@@ -10,7 +10,9 @@
         <template #description>
           <p class="text-ink-gray-6 text-p-sm">
             An authtoken lets <code class="text-xs">mise r tunnel:ngrok</code> expose a site publicly
-            on demand.
+            on demand. Sign in to ngrok and copy your
+            <a href="https://dashboard.ngrok.com/get-started/your-authtoken" target="_blank" rel="noopener"
+              class="underline underline-offset-2">authtoken</a> from the dashboard.
           </p>
         </template>
       </Alert>
