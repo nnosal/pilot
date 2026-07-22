@@ -145,6 +145,7 @@ def _project_entry(child: Path, mef_root: Path, host_name: str, pitchfork_states
         "profile": profile,
         "frappe_version": frappe_version,
         "db_engine": env.get("DB_ENGINE", ""),
+        "overlays": [o.strip() for o in env.get("FRAPPE_OVERLAYS", "").split(",") if o.strip()],
         "ports": {
             "web": _port_int(env.get("WEB_PORT")),
             "db": _port_int(env.get("DB_PORT")),
@@ -342,15 +343,17 @@ def project_sites(name: str):
 
 
 def _site_summary(site, project_dir: Path) -> dict:
-    from admin.backend.api.v1.sites.core import _slim_domains
+    from admin.backend.api.v1.sites.core import _mcp_status, _slim_domains
 
+    bench_root = _bench_dir(project_dir)
     return {
         "name": site.name,
         "exists": site.exists,
         "broken": site.broken,
         "provisioning": site.provisioning,
         "installed_apps": [app for app in site.installed_apps if isinstance(app, str)],
-        "slim": site.name in _slim_domains(_bench_dir(project_dir)),
+        "slim": site.name in _slim_domains(bench_root),
+        "mcp": _mcp_status(bench_root, site.name),
     }
 
 

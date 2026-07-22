@@ -27,6 +27,7 @@
               </button>
               <Badge v-else :label="statusLabel" :theme="statusBadgeTheme" variant="subtle" size="md" class="shrink-0" />
               <Badge :label="networkLabel" :theme="networkTheme" variant="subtle" size="md" class="shrink-0" />
+              <McpBadge v-if="site.mcp" :mcp="site.mcp" />
               <a v-if="shareStatus.status === 'live'" :href="shareStatus.url" target="_blank" rel="noopener"
                 class="shrink-0" @click.stop>
                 <Badge label="Shared" theme="blue" variant="subtle" size="md" class="hover:underline underline-offset-2" />
@@ -112,6 +113,7 @@
 import { computed, onMounted, onUnmounted, ref, watch, watchEffect } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Badge, Button, Dropdown, ErrorMessage, LoadingText, TabButtons, toast } from 'frappe-ui'
+import McpBadge from '@/components/common/McpBadge.vue'
 import UpdatesAvailableButton from '@/components/common/UpdatesAvailableButton.vue'
 import { useSession } from '@/composables/auth/useSession'
 import SiteApps from '@/components/sites/Apps.vue'

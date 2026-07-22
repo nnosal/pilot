@@ -3,6 +3,7 @@
     <span class="w-12 text-ink-gray-6 text-xs shrink-0">{{ label }}</span>
     <Badge :theme="theme" :label="statusLabel" variant="subtle" size="sm" />
     <Badge v-if="port" :label="`:${port}`" theme="gray" variant="subtle" size="sm" />
+    <slot name="badges" />
 
     <div class="flex items-center gap-1 ml-auto">
       <span v-if="loading" class="flex justify-center items-center w-7 h-7">

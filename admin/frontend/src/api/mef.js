@@ -16,6 +16,13 @@ export const mefApi = {
     request.post(`mef/projects/${encodeURIComponent(name)}/pilot-open`).json(),
   selfPilotDown: () => request.post('mef/self/pilot-down').json(),
   listRegistry: () => request.get('mef/registry').json(),
+  listOverlays: () => request.get('mef/overlays').json(),
+  addOverlay: (name, overlay) =>
+    request.post(`mef/projects/${encodeURIComponent(name)}/overlays`, { json: { overlay } }).json(),
+  removeOverlay: (name, overlay) =>
+    request
+      .delete(`mef/projects/${encodeURIComponent(name)}/overlays/${encodeURIComponent(overlay)}`)
+      .json(),
   getJob: (jobId) => request.get(`mef/jobs/${encodeURIComponent(jobId)}`).json(),
   getAutoLoginToken: (name) =>
     request.post(`mef/projects/${encodeURIComponent(name)}/auto-login-token`).json(),

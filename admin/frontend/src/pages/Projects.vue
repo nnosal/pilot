@@ -85,6 +85,17 @@
             size="sm"
           />
           <Button
+            v-if="session.allowMefManagement"
+            variant="ghost"
+            size="sm"
+            title="Project config (overlays…)"
+            @click.stop="openProjectConfig(project)"
+          >
+            <template #prefix>
+              <span class="size-4 lucide-settings" />
+            </template>
+          </Button>
+          <Button
             variant="ghost"
             size="sm"
             :title="`Open admin :${project.pilot_port}`"
@@ -126,6 +137,9 @@
               @stop="stopService(project.name, service.key)"
               @open="openService(project, service.key)"
             >
+              <template v-if="service.key === 'app'" #badges>
+                <Badge v-for="ov in project.overlays" :key="ov" :label="ov" theme="gray" variant="subtle" size="sm" />
+              </template>
               <template v-if="service.key === 'mailpit'" #extra>
                 <Button
                   variant="ghost"
@@ -167,6 +181,7 @@
                     {{ site.name }}
                   </component>
                   <Badge :label="networkLabel(site)" :theme="networkTheme(site)" variant="subtle" size="sm" />
+                  <McpBadge v-if="site.mcp" :mcp="site.mcp" size="sm" />
                   <a v-if="project.is_self && shareStatus[site.name]?.status === 'live'"
                     :href="shareStatus[site.name].url" target="_blank" rel="noopener" @click.stop>
                     <Badge label="Shared" theme="blue" variant="subtle" size="sm" />
@@ -231,6 +246,7 @@
 
   <NewProjectDialog v-if="session.allowMefManagement" v-model="showNewProject" @created="load" />
   <DeleteProjectDialog v-model="showDeleteDialog" :project="deleteTarget" @deleted="load" />
+  <ProjectConfigDialog v-model="showProjectConfig" :project="configTarget" @changed="load" />
   <ShareSiteDialog v-if="shareSite" v-model="shareDialogOpen" :site-name="shareSite.name" />
 </template>
 
@@ -239,9 +255,11 @@ import { onMounted, ref, computed, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { Badge, Button, ErrorMessage, LoadingText, Switch, toast } from 'frappe-ui'
 import UpdatesAvailableButton from '@/components/common/UpdatesAvailableButton.vue'
+import McpBadge from '@/components/common/McpBadge.vue'
 import ServiceRow from '@/components/mef/ServiceRow.vue'
 import NewProjectDialog from '@/components/mef/NewProjectDialog.vue'
 import DeleteProjectDialog from '@/components/mef/DeleteProjectDialog.vue'
+import ProjectConfigDialog from '@/components/mef/ProjectConfigDialog.vue'
 import ShareSiteDialog from '@/components/sites/ShareSiteDialog.vue'
 import { useBreadcrumbs } from '@/composables/common/useBreadcrumbs'
 import { useSession } from '@/composables/auth/useSession'
@@ -266,6 +284,12 @@ const showDeleteDialog = computed({
 function confirmDelete(project) {
   if (project.is_self) return
   deleteTarget.value = project
+}
+const showProjectConfig = ref(false)
+const configTarget = ref(null)
+function openProjectConfig(project) {
+  configTarget.value = project
+  showProjectConfig.value = true
 }
 const {
   projects,

@@ -276,6 +276,114 @@ def doctor_project(name: str):
     return jsonify(_run_doctor(target, name))
 
 
+@mef_bp.get("/mef/overlays")
+def list_overlays():
+    """Overlay names available under ``.config/overlays`` — same set the New Project
+    dialog's picker validates against (``_available_overlays``), reused here so the
+    Projects page can offer only overlays that actually exist."""
+    gate = _gate()
+    if gate is not None:
+        return gate
+    return jsonify({"overlays": sorted(_available_overlays(_mef_root()))})
+
+
+@mef_bp.post("/mef/projects/<name>/overlays")
+def add_overlay(name: str):
+    """Activate an overlay on an already-set-up project: append it to the project's
+    ``FRAPPE_OVERLAYS`` and re-run ``frappe:overlay`` (idempotent — see the overlay
+    contract in CLAUDE.md) so it applies immediately instead of waiting for the next
+    full ``mise r setup``."""
+    gate = _gate()
+    if gate is not None:
+        return gate
+
+    if not _is_valid_project_name(name):
+        return error_response("invalid_project", f"'{name}' is not a valid project name.", 422)
+    if name in _PROTECTED_PROJECTS:
+        return error_response("invalid_project", f"'{name}' is protected.", 422)
+
+    target = _mef_root() / name
+    if not target.is_dir() or not (target / ".miserc.toml").is_file():
+        return error_response("project_not_found", f"Project '{name}' not found.", 404)
+
+    data = request.get_json(silent=True)
+    overlay = (data.get("overlay") or "").strip() if isinstance(data, dict) else ""
+    if not overlay:
+        return error_response("invalid_overlay", "overlay is required.", 422)
+    if overlay not in _available_overlays(_mef_root()):
+        return error_response("invalid_overlay", f"Unknown overlay '{overlay}'.", 422)
+
+    active = [o.strip() for o in _read_project_env(target).get("FRAPPE_OVERLAYS", "").split(",") if o.strip()]
+    if overlay in active:
+        return error_response("overlay_already_active", f"Overlay '{overlay}' is already active.", 409)
+
+    _append_overlay(target / ".env", overlay)
+
+    job_id = _spawn_job(
+        args=_mise_cmd(["frappe:overlay"]),
+        env_extras={},
+        cwd=target,
+        label="overlay",
+    )
+    return jsonify({"job_id": job_id, "log_url": f"/api/v1/mef/jobs/{job_id}"}), 202
+
+
+@mef_bp.delete("/mef/projects/<name>/overlays/<overlay>")
+def remove_overlay(name: str, overlay: str):
+    """Deactivate an overlay: drop it from ``FRAPPE_OVERLAYS`` so it stops being
+    re-applied on the next setup/overlay run. Does NOT undo file changes an already
+    applied overlay made (rsync'd files, regex-patched frappe source) — the overlay
+    contract has no "unapply" concept; only a fresh bench rebuild removes those."""
+    gate = _gate()
+    if gate is not None:
+        return gate
+
+    if not _is_valid_project_name(name):
+        return error_response("invalid_project", f"'{name}' is not a valid project name.", 422)
+    if name in _PROTECTED_PROJECTS:
+        return error_response("invalid_project", f"'{name}' is protected.", 422)
+
+    target = _mef_root() / name
+    if not target.is_dir() or not (target / ".miserc.toml").is_file():
+        return error_response("project_not_found", f"Project '{name}' not found.", 404)
+
+    active = [o.strip() for o in _read_project_env(target).get("FRAPPE_OVERLAYS", "").split(",") if o.strip()]
+    if overlay not in active:
+        return error_response("overlay_not_active", f"Overlay '{overlay}' is not active.", 404)
+
+    _remove_overlay_env(target / ".env", overlay)
+    return jsonify({"overlays": [o for o in active if o != overlay]})
+
+
+def _append_overlay(env_path: Path, overlay: str) -> None:
+    """Append ``overlay`` to the project .env's FRAPPE_OVERLAYS list (creating the
+    line if absent), deduplicating — mirrors sites/core.py's _add_slim_domain_to_env."""
+    lines = env_path.read_text().splitlines() if env_path.exists() else []
+    current = next((line.split("=", 1)[1].strip() for line in lines if line.strip().startswith("FRAPPE_OVERLAYS")), "")
+    overlays = [o.strip() for o in current.split(",") if o.strip()]
+    if overlay in overlays:
+        return
+    updated = ",".join([*overlays, overlay])
+    if any(line.strip().startswith("FRAPPE_OVERLAYS") for line in lines):
+        new_lines = [f"FRAPPE_OVERLAYS = {updated}" if line.strip().startswith("FRAPPE_OVERLAYS") else line for line in lines]
+        env_path.write_text("\n".join(new_lines) + "\n")
+    else:
+        with env_path.open("a") as f:
+            f.write(f"FRAPPE_OVERLAYS = {updated}\n")
+
+
+def _remove_overlay_env(env_path: Path, overlay: str) -> None:
+    """Drop ``overlay`` from the project .env's FRAPPE_OVERLAYS list."""
+    lines = env_path.read_text().splitlines() if env_path.exists() else []
+    current = next((line.split("=", 1)[1].strip() for line in lines if line.strip().startswith("FRAPPE_OVERLAYS")), "")
+    remaining = [o.strip() for o in current.split(",") if o.strip() and o.strip() != overlay]
+    new_lines = [
+        f"FRAPPE_OVERLAYS = {','.join(remaining)}" if line.strip().startswith("FRAPPE_OVERLAYS") else line
+        for line in lines
+    ]
+    env_path.write_text("\n".join(new_lines) + "\n")
+
+
 @mef_bp.post("/mef/projects/<name>/pilot-up")
 def pilot_up(name: str):
     """Start the pilot admin daemon for a sibling project.

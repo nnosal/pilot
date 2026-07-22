@@ -359,6 +359,140 @@ def test_resume_rejects_unknown_project(tmp_path: Path) -> None:
     assert response.get_json()["error"]["code"] == "project_not_found"
 
 
+def test_list_overlays_returns_available_overlay_dirs(tmp_path: Path) -> None:
+    bench_root = tmp_path / "host" / "app"
+    mef_root = bench_root.parent.parent
+    overlays_dir = mef_root / ".config" / "overlays"
+    (overlays_dir / "mcp").mkdir(parents=True)
+    (overlays_dir / "kaliteos").mkdir(parents=True)
+    (overlays_dir / "dolt").mkdir(parents=True)  # DB-engine-implied, not user-toggleable
+
+    _, client = _client(bench_root, allow_mef=True)
+
+    response = client.get("/api/v1/mef/overlays")
+
+    assert response.status_code == 200
+    assert response.get_json()["overlays"] == ["kaliteos", "mcp"]
+
+
+def test_add_overlay_rejects_unknown_overlay(tmp_path: Path) -> None:
+    bench_root = tmp_path / "host" / "app"
+    mef_root = bench_root.parent.parent
+    (mef_root / "v16-frappe").mkdir(parents=True)
+    (mef_root / "v16-frappe" / ".miserc.toml").write_text('env = ["v16"]\n')
+
+    _, client = _client(bench_root, allow_mef=True)
+
+    response = client.post("/api/v1/mef/projects/v16-frappe/overlays", json={"overlay": "ghost"})
+
+    assert response.status_code == 422
+    assert response.get_json()["error"]["code"] == "invalid_overlay"
+
+
+def test_add_overlay_rejects_already_active(tmp_path: Path) -> None:
+    bench_root = tmp_path / "host" / "app"
+    mef_root = bench_root.parent.parent
+    (mef_root / ".config" / "overlays" / "mcp").mkdir(parents=True)
+    target = mef_root / "v16-frappe"
+    target.mkdir()
+    (target / ".miserc.toml").write_text('env = ["v16"]\n')
+    (target / ".env").write_text("FRAPPE_OVERLAYS = erpnext,mcp\n")
+
+    _, client = _client(bench_root, allow_mef=True)
+
+    response = client.post("/api/v1/mef/projects/v16-frappe/overlays", json={"overlay": "mcp"})
+
+    assert response.status_code == 409
+    assert response.get_json()["error"]["code"] == "overlay_already_active"
+
+
+def test_add_overlay_appends_env_and_spawns_frappe_overlay_task(tmp_path: Path) -> None:
+    bench_root = tmp_path / "host" / "app"
+    mef_root = bench_root.parent.parent
+    (mef_root / ".config" / "overlays" / "mcp").mkdir(parents=True)
+    target = mef_root / "v16-frappe"
+    target.mkdir()
+    (target / ".miserc.toml").write_text('env = ["v16"]\n')
+    (target / ".env").write_text("FRAPPE_OVERLAYS = erpnext\nSITE_DOMAIN = v16-frappe.localhost\n")
+
+    _, client = _client(bench_root, allow_mef=True)
+
+    captured: dict = {}
+
+    def fake_popen(args, cwd, env, stdout, stderr, start_new_session):
+        captured["args"] = args
+        captured["cwd"] = cwd
+        return _stub_popen(returncode=0)(args, cwd, env, stdout, stderr, start_new_session)
+
+    with patch("admin.backend.api.v1.mef.subprocess.Popen", side_effect=fake_popen):
+        response = client.post("/api/v1/mef/projects/v16-frappe/overlays", json={"overlay": "mcp"})
+
+    assert response.status_code == 202
+    assert response.get_json()["job_id"].startswith("overlay-")
+    assert captured["args"][1:4] == ["r", "frappe:overlay"]
+    assert captured["cwd"] == str(target)
+
+    env_text = (target / ".env").read_text()
+    assert "FRAPPE_OVERLAYS = erpnext,mcp" in env_text
+    assert "SITE_DOMAIN = v16-frappe.localhost" in env_text
+
+
+def test_add_overlay_rejects_unknown_project(tmp_path: Path) -> None:
+    bench_root = tmp_path / "host" / "app"
+    _, client = _client(bench_root, allow_mef=True)
+
+    response = client.post("/api/v1/mef/projects/ghost/overlays", json={"overlay": "mcp"})
+
+    assert response.status_code == 404
+    assert response.get_json()["error"]["code"] == "project_not_found"
+
+
+def test_remove_overlay_drops_it_from_env(tmp_path: Path) -> None:
+    bench_root = tmp_path / "host" / "app"
+    mef_root = bench_root.parent.parent
+    target = mef_root / "v16-frappe"
+    target.mkdir(parents=True)
+    (target / ".miserc.toml").write_text('env = ["v16"]\n')
+    (target / ".env").write_text("FRAPPE_OVERLAYS = erpnext,mcp\nSITE_DOMAIN = v16-frappe.localhost\n")
+
+    _, client = _client(bench_root, allow_mef=True)
+
+    response = client.delete("/api/v1/mef/projects/v16-frappe/overlays/mcp")
+
+    assert response.status_code == 200
+    assert response.get_json()["overlays"] == ["erpnext"]
+    env_text = (target / ".env").read_text()
+    assert "FRAPPE_OVERLAYS = erpnext" in env_text
+    assert "mcp" not in env_text.split("FRAPPE_OVERLAYS")[1].split("\n")[0]
+    assert "SITE_DOMAIN = v16-frappe.localhost" in env_text
+
+
+def test_remove_overlay_rejects_when_not_active(tmp_path: Path) -> None:
+    bench_root = tmp_path / "host" / "app"
+    mef_root = bench_root.parent.parent
+    target = mef_root / "v16-frappe"
+    target.mkdir(parents=True)
+    (target / ".miserc.toml").write_text('env = ["v16"]\n')
+    (target / ".env").write_text("FRAPPE_OVERLAYS = erpnext\n")
+
+    _, client = _client(bench_root, allow_mef=True)
+
+    response = client.delete("/api/v1/mef/projects/v16-frappe/overlays/mcp")
+
+    assert response.status_code == 404
+    assert response.get_json()["error"]["code"] == "overlay_not_active"
+
+
+def test_remove_overlay_rejects_unknown_project(tmp_path: Path) -> None:
+    bench_root = tmp_path / "host" / "app"
+    _, client = _client(bench_root, allow_mef=True)
+
+    response = client.delete("/api/v1/mef/projects/ghost/overlays/mcp")
+
+    assert response.status_code == 404
+    assert response.get_json()["error"]["code"] == "project_not_found"
+
+
 def test_doctor_rejects_unknown_project(tmp_path: Path) -> None:
     bench_root = tmp_path / "host" / "app"
     _, client = _client(bench_root, allow_mef=True)

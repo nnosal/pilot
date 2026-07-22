@@ -59,6 +59,8 @@
                   <Badge :label="networkLabel(site)" :theme="networkTheme(site)" variant="subtle" size="sm"
                     class="shrink-0" />
 
+                  <McpBadge v-if="site.mcp" :mcp="site.mcp" size="sm" />
+
                   <!-- Currently shared publicly -->
                   <a v-if="shareStatus[site.name]?.status === 'live'" :href="shareStatus[site.name].url"
                     target="_blank" rel="noopener" class="shrink-0" @click.stop>
@@ -116,6 +118,7 @@
           <div v-else-if="column.key === 'status'" class="flex items-center gap-1.5">
             <Badge :label="statusLabel(row.site)" :theme="statusTheme(row.site)" variant="subtle" size="sm" />
             <Badge :label="networkLabel(row.site)" :theme="networkTheme(row.site)" variant="subtle" size="sm" />
+            <McpBadge v-if="row.site.mcp" :mcp="row.site.mcp" size="sm" />
             <a v-if="shareStatus[row.site.name]?.status === 'live'" :href="shareStatus[row.site.name].url"
               target="_blank" rel="noopener" @click.stop>
               <Badge label="Shared" theme="blue" variant="subtle" size="sm" />
@@ -183,6 +186,7 @@ import {
   TabButtons,
   toast,
 } from 'frappe-ui'
+import McpBadge from '@/components/common/McpBadge.vue'
 import NewSiteDialog from '@/components/sites/NewSiteDialog.vue'
 import RunWizardDialog from '@/components/sites/RunWizardDialog.vue'
 import MigrateSiteDialog from '@/components/sites/MigrateSiteDialog.vue'

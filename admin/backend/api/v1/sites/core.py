@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import secrets
 from pathlib import Path
 
@@ -326,6 +327,37 @@ def _slim_domains(bench_root: Path) -> set[str]:
     return set()
 
 
+def _mcp_status(bench_root: Path, site: str) -> dict | None:
+    """None unless the mcp overlay (.config/overlays/mcp) is active for this project
+    AND this site's token pair was provisioned (`mise r mcp:token <site>`) — same
+    project .env, same slug/var-name derivation as transform.py / the mcp:token task.
+    Carries everything the frontend needs to reproduce transform.py's .mcp.json entry
+    (client wiring) without guessing at ports or header shapes twice."""
+    env_path = bench_root.parent / ".env"
+    if not env_path.exists():
+        return None
+    lines = env_path.read_text().splitlines()
+    overlays = next((line.split("=", 1)[1] for line in lines if line.strip().startswith("FRAPPE_OVERLAYS")), "")
+    if "mcp" not in [o.strip() for o in overlays.split(",")]:
+        return None
+    token_var = "FRAPPE_MCP_TOKEN_" + re.sub(r"[^A-Z0-9]+", "_", site.upper()).strip("_")
+    token = next(
+        (line.split("=", 1)[1].strip() for line in lines if line.strip().startswith(f"{token_var}=")),
+        None,
+    )
+    if not token:
+        return None
+    port = next((line.split("=", 1)[1].strip() for line in lines if line.strip().startswith("WEB_PORT")), "8000")
+    slug = re.sub(r"[^a-zA-Z0-9]+", "-", site.replace(".localhost", "")).strip("-")
+    return {
+        "server_name": f"frappe-{slug}",
+        "url": f"http://127.0.0.1:{port}/api/method/frappe.mcp.handle_mcp",
+        "token_env": token_var,
+        "token": token,
+        "site": site,
+    }
+
+
 def _site_resource(site: SiteInfo, bench_root: Path) -> dict:
     framework_branch = site.site_config.get("frappe_branch", "")
     return {
@@ -336,4 +368,5 @@ def _site_resource(site: SiteInfo, bench_root: Path) -> dict:
         "broken": site.broken,
         "provisioning": site.provisioning,
         "slim": site.name in _slim_domains(bench_root),
+        "mcp": _mcp_status(bench_root, site.name),
     }

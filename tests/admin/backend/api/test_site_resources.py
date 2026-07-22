@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+from admin.backend.api.v1.sites.core import _mcp_status
 from tests.admin.backend.test_admin_app import _client
 
 
@@ -88,6 +89,45 @@ def test_invalid_idempotency_key_is_a_validation_error(tmp_path: Path) -> None:
 
     assert response.status_code == 422
     assert response.get_json()["error"]["code"] == "invalid_task"
+
+
+def test_mcp_status_none_without_project_env(tmp_path: Path) -> None:
+    bench_root = tmp_path / "benches" / "current"
+    assert _mcp_status(bench_root, "s.localhost") is None
+
+
+def test_mcp_status_none_when_overlay_not_enabled(tmp_path: Path) -> None:
+    bench_root = tmp_path / "benches" / "current"
+    project_dir = bench_root.parent
+    project_dir.mkdir(parents=True)
+    (project_dir / ".env").write_text(
+        "FRAPPE_OVERLAYS = kaliteos\nFRAPPE_MCP_TOKEN_S_LOCALHOST=key:secret\n"
+    )
+    assert _mcp_status(bench_root, "s.localhost") is None
+
+
+def test_mcp_status_none_when_token_missing(tmp_path: Path) -> None:
+    bench_root = tmp_path / "benches" / "current"
+    project_dir = bench_root.parent
+    project_dir.mkdir(parents=True)
+    (project_dir / ".env").write_text("FRAPPE_OVERLAYS = mcp\n")
+    assert _mcp_status(bench_root, "s.localhost") is None
+
+
+def test_mcp_status_when_overlay_and_token_present(tmp_path: Path) -> None:
+    bench_root = tmp_path / "benches" / "current"
+    project_dir = bench_root.parent
+    project_dir.mkdir(parents=True)
+    (project_dir / ".env").write_text(
+        "FRAPPE_OVERLAYS = erpnext,mcp\nFRAPPE_MCP_TOKEN_S_LOCALHOST=key:secret\nWEB_PORT = 8123\n"
+    )
+    assert _mcp_status(bench_root, "s.localhost") == {
+        "server_name": "frappe-s",
+        "url": "http://127.0.0.1:8123/api/method/frappe.mcp.handle_mcp",
+        "token_env": "FRAPPE_MCP_TOKEN_S_LOCALHOST",
+        "token": "key:secret",
+        "site": "s.localhost",
+    }
 
 
 def test_site_creation_rejects_symlinked_sites_root(tmp_path: Path) -> None:
