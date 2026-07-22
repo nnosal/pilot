@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import contextlib
 import re
 import subprocess
+import urllib.error
+import urllib.request
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
@@ -21,8 +24,29 @@ class SiteLogin:
         sid = self.create_session()
         if not sid:
             return None
+        self._warm_session(sid)
         redirect_url = self.redirect_url(site_config, proxy_tls)
         return f"{redirect_url}{'&' if '?' in redirect_url else '?'}sid={sid}"
+
+    def _warm_session(self, sid: str) -> None:
+        """The session this just wrote lands in Redis over its own connection,
+        separate from the dev server's. Frappe's worker keeps an in-process
+        ClientSideCache in front of Redis (frappe/utils/redis_wrapper.py) that
+        only refreshes on the next real round-trip for a given key - the very
+        first request against a freshly minted sid can still see the stale
+        (pre-session) state and bounce to /login, every request after that
+        resolves correctly. Confirmed live, repeatedly: same sid, same site,
+        fails once then succeeds. One throwaway local request absorbs that
+        first miss here instead of in the user's actual browser tab.
+        """
+        if self.site.bench.config.production.enabled:
+            return
+        url = f"http://127.0.0.1:{self.site.bench.config.http_port}/api/method/frappe.ping"
+        request = urllib.request.Request(
+            url, headers={"Host": self.site.config.name, "Cookie": f"sid={sid}"}
+        )
+        with contextlib.suppress(urllib.error.URLError, OSError, TimeoutError):
+            urllib.request.urlopen(request, timeout=5)
 
     def create_session(self) -> str | None:
         # Build the werkzeug request stub directly instead of via frappe.utils.set_request:
