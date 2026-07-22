@@ -14,6 +14,11 @@ export const sitesApi = {
   migrate: (name) => request.post(`sites/${encodeURIComponent(name)}/actions/migrate`).json(),
   reinstall: (name) => request.post(`sites/${encodeURIComponent(name)}/actions/reinstall`).json(),
   drop: (name) => request.delete(`sites/${encodeURIComponent(name)}`).json(),
+  share: {
+    start: (name) => request.post(`sites/${encodeURIComponent(name)}/share`).json(),
+    status: (name) => request.get(`sites/${encodeURIComponent(name)}/share`).json(),
+    stop: (name) => request.delete(`sites/${encodeURIComponent(name)}/share`),
+  },
   getSetupStatus: (name) => request.get(`sites/${encodeURIComponent(name)}/setup-status`).json(),
   runWizard: (name, payload = {}) =>
     request.post(`sites/${encodeURIComponent(name)}/wizard`, { json: payload }).json(),

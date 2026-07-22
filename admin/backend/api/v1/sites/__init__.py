@@ -9,6 +9,7 @@ from admin.backend.api.v1.sites import (  # noqa: E402
     configuration,
     core,
     domains,
+    share,
     wizard,
 )
 
@@ -19,6 +20,7 @@ __all__ = [
     "configuration",
     "core",
     "domains",
+    "share",
     "sites_bp",
     "wizard",
 ]

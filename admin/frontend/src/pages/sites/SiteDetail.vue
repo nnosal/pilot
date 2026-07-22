@@ -89,6 +89,7 @@
 
   <MigrateSiteDialog v-if="site" v-model="showMigrate" :site-name="siteName" />
   <DropSiteDialog v-if="site" v-model="showDrop" :site-name="siteName" />
+  <ShareSiteDialog v-if="site" v-model="showShare" :site-name="siteName" />
 
   <Teleport defer to="#header-actions">
     <Button variant="subtle" size="sm" @click="openSite">
@@ -112,8 +113,10 @@ import SiteSettings from '@/components/sites/Settings.vue'
 import RunWizardDialog from '@/components/sites/RunWizardDialog.vue'
 import MigrateSiteDialog from '@/components/sites/MigrateSiteDialog.vue'
 import DropSiteDialog from '@/components/sites/DropSiteDialog.vue'
+import ShareSiteDialog from '@/components/sites/ShareSiteDialog.vue'
 import { apiErrorMessage } from '@/api/client'
 import { sitesApi } from '@/api/sites'
+import { shareApi } from '@/api/share'
 import { useBreadcrumbs } from '@/composables/common/useBreadcrumbs'
 import { useSite } from '@/composables/sites/useSite'
 import { useBench } from '@/composables/benches/useBench'
@@ -229,6 +232,8 @@ async function backupNow() {
 
 const showMigrate = ref(false)
 const showDrop = ref(false)
+const showShare = ref(false)
+const slimConnected = ref(false)
 
 const menuOptions = computed(() => [
   ...(isMobile.value && !session.readOnly ? [{ label: 'Install app', icon: 'lucide-plus', onClick: goToMarketplace }] : []),
@@ -238,6 +243,9 @@ const menuOptions = computed(() => [
     ? []
     : [{ label: 'Reset setup wizard', icon: 'lucide-rotate-ccw', onClick: resetWizard }]),
   ...(session.readOnly ? [] : [{ label: 'Migrate site', icon: 'lucide-refresh-cw', onClick: () => { showMigrate.value = true } }]),
+  ...(session.readOnly
+    ? []
+    : [{ label: 'Share site', icon: 'lucide-share-2', disabled: !slimConnected.value, onClick: () => { showShare.value = true } }]),
   ...(session.readOnly ? [] : [{ label: 'Delete site', icon: 'lucide-trash-2', onClick: () => { showDrop.value = true } }]),
 ])
 
@@ -258,6 +266,7 @@ onMounted(() => {
   load()
   loadBench()
   loadSetupStatus()
+  shareApi.slimStatus().then((s) => { slimConnected.value = s.connected }).catch(() => {})
 })
 </script>
 

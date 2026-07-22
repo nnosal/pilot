@@ -155,6 +155,7 @@
 
   <MigrateSiteDialog v-if="migrateSite" v-model="migrateDialogOpen" :site-name="migrateSite.name" />
   <DropSiteDialog v-if="dropSite" v-model="dropDialogOpen" :site-name="dropSite.name" />
+  <ShareSiteDialog v-if="shareSite" v-model="shareDialogOpen" :site-name="shareSite.name" />
 </template>
 
 <script setup>
@@ -176,11 +177,13 @@ import NewSiteDialog from '@/components/sites/NewSiteDialog.vue'
 import RunWizardDialog from '@/components/sites/RunWizardDialog.vue'
 import MigrateSiteDialog from '@/components/sites/MigrateSiteDialog.vue'
 import DropSiteDialog from '@/components/sites/DropSiteDialog.vue'
+import ShareSiteDialog from '@/components/sites/ShareSiteDialog.vue'
 import UpdatesAvailableButton from '@/components/common/UpdatesAvailableButton.vue'
 import { useBreadcrumbs } from '@/composables/common/useBreadcrumbs'
 import { useSites } from '@/composables/sites/useSites'
 import { apiErrorMessage } from '@/api/client'
 import { sitesApi } from '@/api/sites'
+import { shareApi } from '@/api/share'
 import { openTaskDetailPage } from '@/utils/taskRoute'
 import { openSiteLogin } from '@/utils/siteLogin'
 import { siteStatus, siteStatusLabel, siteStatusTheme } from '@/utils/siteStatus'
@@ -285,11 +288,26 @@ function openDropDialog(site) {
   dropDialogOpen.value = true
 }
 
+const shareSite = ref(null)
+const shareDialogOpen = ref(false)
+const slimConnected = ref(false)
+
+function openShareDialog(site) {
+  shareSite.value = site
+  shareDialogOpen.value = true
+}
+
 function siteMenuOptions(site) {
   return [
     { label: 'Open site', icon: 'lucide-external-link', onClick: () => openSite(site) },
     { label: 'Back up now', icon: 'lucide-archive', onClick: () => backupNow(site) },
     { label: 'Migrate site', icon: 'lucide-refresh-cw', onClick: () => openMigrateDialog(site) },
+    {
+      label: 'Share site',
+      icon: 'lucide-share-2',
+      disabled: !slimConnected.value,
+      onClick: () => openShareDialog(site),
+    },
     { label: 'Delete site', icon: 'lucide-trash-2', onClick: () => openDropDialog(site) },
   ]
 }
@@ -318,5 +336,6 @@ function openWizardDialog(site) {
 onMounted(async () => {
   await load()
   loadSetupStatus()
+  shareApi.slimStatus().then((s) => { slimConnected.value = s.connected }).catch(() => {})
 })
 </script>
