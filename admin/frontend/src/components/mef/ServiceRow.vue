@@ -2,6 +2,7 @@
   <div class="flex items-center gap-2 bg-surface-white px-2.5 py-1.5 rounded border border-outline-gray-1">
     <span class="w-12 text-ink-gray-6 text-xs shrink-0">{{ label }}</span>
     <Badge :theme="theme" :label="statusLabel" variant="subtle" size="sm" />
+    <Badge v-if="port" :label="`:${port}`" theme="gray" variant="subtle" size="sm" />
 
     <div class="flex items-center gap-1 ml-auto">
       <span v-if="loading" class="flex justify-center items-center w-7 h-7">
@@ -55,6 +56,7 @@ const props = defineProps({
   loading: { type: Boolean, default: false },
   canControl: { type: Boolean, default: true },
   canOpen: { type: Boolean, default: false },
+  port: { type: [Number, String], default: null },
 })
 defineEmits(['start', 'stop', 'open'])
 

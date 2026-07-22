@@ -121,6 +121,7 @@
               :loading="controlLoading === `${project.name}:${service.key}`"
               :can-control="service.key !== 'pilot' || !project.is_self"
               :can-open="service.canOpen"
+              :port="servicePort(project, service.key)"
               @start="startService(project.name, service.key)"
               @stop="stopService(project.name, service.key)"
               @open="openService(project, service.key)"
@@ -305,6 +306,11 @@ const pilotTheme = (project) => PILOT_STATUS[pilotStatus(project)].theme
 function serviceStatus(project, key) {
   if (key === 'db') return projectDetails.value[project.name]?.dbStatus || 'unknown'
   return project.services?.[key] || 'unknown'
+}
+
+function servicePort(project, key) {
+  if (key === 'pilot') return project.pilot_port
+  return project.ports?.[key === 'app' ? 'web' : key]
 }
 
 function openAdmin(project) {
