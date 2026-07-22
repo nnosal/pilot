@@ -27,15 +27,15 @@
       </div>
 
       <div class="space-y-4">
-        <FormControl label="Authtoken" type="password" v-model="ngrokToken"
-          :placeholder="ngrokConnected ? ngrokTokenPreview : 'Paste your ngrok authtoken'"
-          @keydown.enter="connectNgrok" />
-        <ErrorMessage v-if="ngrokError" :message="ngrokError" />
-        <div class="flex justify-end">
+        <div class="flex items-end gap-2">
+          <FormControl class="flex-1" label="Authtoken" type="password" v-model="ngrokToken"
+            :placeholder="ngrokConnected ? ngrokTokenPreview : 'Paste your ngrok authtoken'"
+            @keydown.enter="connectNgrok" />
           <Button variant="solid" :loading="ngrokConnecting" @click="connectNgrok">
             {{ ngrokConnected ? 'Update Token' : 'Connect' }}
           </Button>
         </div>
+        <ErrorMessage v-if="ngrokError" :message="ngrokError" />
       </div>
     </div>
 
