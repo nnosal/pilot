@@ -25,12 +25,16 @@ class SiteLogin:
         return f"{redirect_url}{'&' if '?' in redirect_url else '?'}sid={sid}"
 
     def create_session(self) -> str | None:
+        # Build the werkzeug request stub directly instead of via frappe.utils.set_request:
+        # that helper doesn't exist on Frappe v12, and this call must work on any version.
         program = (
             "import sys, frappe\n"
             "from frappe.auth import CookieManager, LoginManager\n"
+            "from werkzeug.test import EnvironBuilder\n"
+            "from werkzeug.wrappers import Request\n"
             "frappe.init(site=sys.argv[1], sites_path='.')\n"
             "frappe.connect()\n"
-            "frappe.utils.set_request(path='/')\n"
+            "frappe.local.request = Request(EnvironBuilder(path='/').get_environ())\n"
             "frappe.local.cookie_manager = CookieManager()\n"
             "frappe.local.login_manager = LoginManager()\n"
             "frappe.local.login_manager.login_as('Administrator')\n"

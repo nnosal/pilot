@@ -61,7 +61,6 @@ def list_installed_apps(site_config: dict, bench_root: Path, site_name: str) -> 
 
 def query_installed_apps_via_db(site_config: dict) -> list[str] | None:
     import shutil
-    import subprocess
 
     db_name = site_config.get("db_name", "")
     db_password = site_config.get("db_password", "")
@@ -84,26 +83,51 @@ def query_installed_apps_via_db(site_config: dict) -> list[str] | None:
     else:
         conn_args += [f"--host={db_host}", f"--port={db_port}"]
 
+    apps = _query_apps_table(cli, conn_args, db_name)
+    if apps is None:
+        return None
+    if apps:
+        return apps
+    # Frappe < v13 never populated `tabInstalled Application`; it tracked installed
+    # apps as a JSON list in the `installed_apps` global default instead.
+    return _query_installed_apps_default(cli, conn_args, db_name)
+
+
+def _run_sql(cli: str, conn_args: list[str], db_name: str, sql: str) -> str | None:
+    import subprocess
+
     try:
         result = subprocess.run(
-            [
-                cli,
-                *conn_args,
-                "--batch",
-                "--skip-column-names",
-                db_name,
-                "-e",
-                "SELECT app_name FROM `tabInstalled Application` ORDER BY idx",
-            ],
+            [cli, *conn_args, "--batch", "--skip-column-names", db_name, "-e", sql],
             capture_output=True,
             text=True,
             timeout=5,
         )
-        if result.returncode != 0:
-            return None
-        return [line.strip() for line in result.stdout.splitlines() if line.strip()]
     except Exception:
         return None
+    return result.stdout if result.returncode == 0 else None
+
+
+def _query_apps_table(cli: str, conn_args: list[str], db_name: str) -> list[str] | None:
+    stdout = _run_sql(cli, conn_args, db_name, "SELECT app_name FROM `tabInstalled Application` ORDER BY idx")
+    if stdout is None:
+        return None
+    return [line.strip() for line in stdout.splitlines() if line.strip()]
+
+
+def _query_installed_apps_default(cli: str, conn_args: list[str], db_name: str) -> list[str] | None:
+    sql = "SELECT defvalue FROM `tabDefaultValue` WHERE defkey='installed_apps' AND parent='__global' LIMIT 1"
+    stdout = _run_sql(cli, conn_args, db_name, sql)
+    if stdout is None:
+        return None
+    value = stdout.strip()
+    if not value:
+        return []
+    try:
+        apps = json.loads(value)
+    except json.JSONDecodeError:
+        return []
+    return [app for app in apps if isinstance(app, str)]
 
 
 def set_site_ssl_flag(sites_root: Path, site_name: str, enabled: bool) -> None:
