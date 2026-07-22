@@ -146,7 +146,7 @@ def _check_auth_request(app: Flask, bench_root):
 
 # Blueprints whose mutations stay usable in read-only mode: auth/session (core),
 # SQL playground (databases), settings edits, worker callbacks and update checks.
-_READ_ONLY_ALLOWED_BLUEPRINTS = {"core", "database", "settings", "s3", "task_worker", "updates"}
+_READ_ONLY_ALLOWED_BLUEPRINTS = {"core", "database", "settings", "s3", "share", "task_worker", "updates"}
 _READ_ONLY_ALLOWED_ENDPOINTS = {"apps.fetch_updates"}
 
 

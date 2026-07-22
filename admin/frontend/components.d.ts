@@ -55,6 +55,7 @@ declare module 'vue' {
     ServiceRow: typeof import('./src/components/mef/ServiceRow.vue')['default']
     Settings: typeof import('./src/components/sites/Settings.vue')['default']
     SettingsDialog: typeof import('./src/components/settings/SettingsDialog.vue')['default']
+    Share: typeof import('./src/components/settings/Share.vue')['default']
     SimpleTable: typeof import('./src/components/common/SimpleTable.vue')['default']
     SQLCodeEditor: typeof import('./src/components/database/SQLCodeEditor.vue')['default']
     SQLSchemaDialog: typeof import('./src/components/database/SQLSchemaDialog.vue')['default']

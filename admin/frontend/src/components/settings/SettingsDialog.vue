@@ -39,6 +39,7 @@
           <Waf v-else-if="currentSection === 'waf'" />
           <Git v-else-if="currentSection === 'github'" />
           <S3Bucket v-else-if="currentSection === 's3-bucket'" />
+          <Share v-else-if="currentSection === 'share'" />
           <SshKeys v-else-if="currentSection === 'ssh-keys'" ref="sshKeysRef" />
           <SystemInfo v-else-if="currentSection === 'system-info'" />
         </div>
@@ -55,6 +56,7 @@ import Firewall from '@/components/settings/Firewall.vue'
 import Waf from '@/components/settings/Waf.vue'
 import Git from '@/components/settings/Git.vue'
 import S3Bucket from '@/components/settings/S3Bucket.vue'
+import Share from '@/components/settings/Share.vue'
 import SshKeys from '@/components/settings/SshKeys.vue'
 import SystemInfo from '@/components/settings/SystemInfo.vue'
 import Workers from '@/components/settings/Workers.vue'
@@ -69,6 +71,7 @@ const sections = computed(() => [
   { id: 'github', label: 'Git', icon: 'lucide-git-branch' },
   { id: 'workers', label: 'Workers', icon: 'lucide-server-cog' },
   { id: 's3-bucket', label: 'S3 Bucket', icon: 'lucide-archive' },
+  { id: 'share', label: 'Share', icon: 'lucide-share-2' },
   { id: 'firewall', label: 'Firewall', icon: 'lucide-shield' },
   { id: 'waf', label: 'WAF', icon: 'lucide-shield-alert' },
   { id: 'ssh-keys', label: 'SSH Keys', icon: 'lucide-key-round' },
