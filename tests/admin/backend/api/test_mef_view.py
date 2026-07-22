@@ -285,6 +285,44 @@ def test_create_spawns_headless_mise_new_and_streams_log(tmp_path: Path) -> None
     assert "mise r new: starting" in detail["log"]
 
 
+def test_create_strips_inherited_mise_env_vars(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """admin runs as `mise r pilot:admin` itself — its own MISE_ENV/MISE_PROJECT_ROOT/...
+    are pinned to the project hosting this admin. Left in the spawned env, a `mise r new`
+    targeting a *different* project would inherit this admin's profile instead of resolving
+    the target directory's own (wrong frappe version, wrong python/node tool versions)."""
+    bench_root = tmp_path / "host" / "app"
+    mef_root = bench_root.parent.parent
+    config_dir = mef_root / ".config" / "mise"
+    config_dir.mkdir(parents=True)
+    (config_dir / "config.v16.toml").write_text('FRAPPE_VERSION = "16-hotfix"\n')
+    overlays_dir = mef_root / ".config" / "overlays" / "mcp"
+    overlays_dir.mkdir(parents=True)
+
+    monkeypatch.setenv("MISE_ENV", "v16")
+    monkeypatch.setenv("MISE_PROJECT_ROOT", str(mef_root / "some-other-project"))
+    monkeypatch.setenv("MISE_SESSION", "opaque-session-blob")
+    monkeypatch.setenv("SOME_UNRELATED_VAR", "keep-me")
+
+    _, client = _client(bench_root, allow_mef=True)
+
+    captured: dict = {}
+    release = threading.Event()
+
+    def fake_popen(args, cwd, env, stdout, stderr, start_new_session):
+        captured["env"] = dict(env)
+        return _stub_popen(returncode=0, block=release)(args, cwd, env, stdout, stderr, start_new_session)
+
+    with patch("admin.backend.api.v1.mef.subprocess.Popen", side_effect=fake_popen):
+        client.post(
+            "/api/v1/mef/projects",
+            json={"profile": "v16", "directory": "_demo/y", "overlays": ["mcp"]},
+        )
+    release.set()
+
+    assert not any(key.startswith("MISE_") for key in captured["env"])
+    assert captured["env"]["SOME_UNRELATED_VAR"] == "keep-me"
+
+
 def test_delete_spawns_headless_mise_delete_with_confirm(tmp_path: Path) -> None:
     bench_root = tmp_path / "host" / "app"
     mef_root = bench_root.parent.parent

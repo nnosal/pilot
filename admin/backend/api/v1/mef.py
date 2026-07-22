@@ -564,7 +564,16 @@ def _spawn_job(args: list[str], env_extras: dict, cwd: Path, label: str) -> str:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_handle = log_path.open("ab")
 
-    env = {**os.environ, **env_extras, "NONINTERACTIVE": "1"}
+    # Strip MISE_* from our own inherited env before merging: this daemon runs as a
+    # mise task itself (pitchfork -> `mise r pilot:admin`), so os.environ carries
+    # MISE_ENV/MISE_PROJECT_ROOT/MISE_SESSION/... pinned to ITS OWN host project's
+    # profile. Left in place, a spawned `mise r new` targeting a different project
+    # (different profile/frappe version) inherits that pinned profile instead of
+    # resolving its own — mise config becomes correct-looking (.miserc.toml is read)
+    # but tool versions (python/node) and MISE_ENV-derived vars still resolve to the
+    # daemon's host profile, not the target directory's.
+    base_env = {k: v for k, v in os.environ.items() if not k.startswith("MISE_")}
+    env = {**base_env, **env_extras, "NONINTERACTIVE": "1"}
 
     quoted = " ".join(shlex.quote(arg) for arg in args)
     log_handle.write(f"$ cd {cwd} && {quoted}\n".encode())
