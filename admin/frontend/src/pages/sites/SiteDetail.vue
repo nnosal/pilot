@@ -21,10 +21,14 @@
           <div class="min-w-0">
             <div class="flex items-center gap-2 min-w-0">
               <h1 class="font-semibold text-ink-gray-9 text-base sm:text-xl truncate">{{ site.name }}</h1>
-              <Badge :label="statusLabel" :theme="statusBadgeTheme" variant="subtle" size="md" class="shrink-0" />
+              <button v-if="status === 'online'" type="button" class="shrink-0 hover:underline underline-offset-2"
+                @click="openSite">
+                <Badge :label="statusLabel" :theme="statusBadgeTheme" variant="subtle" size="md" />
+              </button>
+              <Badge v-else :label="statusLabel" :theme="statusBadgeTheme" variant="subtle" size="md" class="shrink-0" />
               <Badge :label="networkLabel" :theme="networkTheme" variant="subtle" size="md" class="shrink-0" />
               <a v-if="shareStatus.status === 'live'" :href="shareStatus.url" target="_blank" rel="noopener"
-                class="shrink-0" @click.stop>
+                class="shrink-0 hover:underline underline-offset-2" @click.stop>
                 <Badge label="Shared" theme="blue" variant="subtle" size="md" />
               </a>
             </div>
