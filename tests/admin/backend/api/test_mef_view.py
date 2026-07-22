@@ -401,9 +401,15 @@ def test_doctor_flags_orphan_when_reachable_but_pid_mismatch(tmp_path: Path) -> 
             self.pid = pid
 
         def net_connections(self, kind="inet"):
-            # pid 111 (bench) doesn't actually hold 8039 -> orphan_suspected
-            # pid 222 (redis) correctly holds 6436 -> no orphan
+            # pid 111 (bench, the tracked supervisor) doesn't itself hold 8039 -> checked
+            # via children() instead, same as the real "mise run start" -> honcho tree.
+            # pid 222 (redis) correctly holds 6436 directly -> no orphan.
             return [FakeConn(6436)] if self.pid == 222 else []
+
+        def children(self, recursive=True):
+            # bench's real listening socket lives on a grandchild it spawned, never on
+            # the tracked supervisor PID itself -> still no match, orphan_suspected stays.
+            return []
 
     def fake_connect_ex(self, addr):
         # Both ports answer (something is listening), regardless of who.
@@ -439,6 +445,39 @@ def test_doctor_flags_orphan_when_reachable_but_pid_mismatch(tmp_path: Path) -> 
     assert body["ports"]["redis"]["orphan_suspected"] is False
 
     assert body["frappe_ping"] == {"ok": True, "status": 200, "body": '{"message":"pong"}'}
+
+
+def test_pid_owns_port_checks_descendants_not_just_the_tracked_pid() -> None:
+    """Real bug caught testing this against a live project: pitchfork tracks the
+    ``mise run start`` supervisor PID, but the actual listening socket belongs to a
+    grandchild it spawned via honcho (bench's own werkzeug worker). Checking only the
+    tracked PID's own sockets makes every healthy daemon read as "orphaned"."""
+    import admin.backend.api.v1.mef as mef_module
+
+    class FakeConn:
+        def __init__(self, port):
+            self.status = "LISTEN"
+            self.laddr = type("Addr", (), {"port": port})()
+
+    class FakeProc:
+        def __init__(self, pid, own_ports=(), kids=()):
+            self.pid = pid
+            self._own_ports = own_ports
+            self._kids = kids
+
+        def net_connections(self, kind="inet"):
+            return [FakeConn(p) for p in self._own_ports]
+
+        def children(self, recursive=True):
+            return self._kids
+
+    grandchild = FakeProc(3, own_ports=[8039])
+    child = FakeProc(2, own_ports=[], kids=[grandchild])
+    supervisor = FakeProc(1, own_ports=[], kids=[child, grandchild])
+
+    with patch("admin.backend.api.v1.mef.psutil.Process", return_value=supervisor):
+        assert mef_module._pid_owns_port(1, 8039) is True
+        assert mef_module._pid_owns_port(1, 9999) is False
 
 
 def test_delete_spawns_headless_mise_delete_with_confirm(tmp_path: Path) -> None:

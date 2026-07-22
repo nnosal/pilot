@@ -648,15 +648,28 @@ def _port_reachable(port: int) -> bool:
 
 
 def _pid_owns_port(pid: int, port: int) -> bool | None:
-    """True/False if determinable, None if the PID's own sockets aren't inspectable."""
+    """True/False if determinable, None if no descendant's sockets were inspectable.
+
+    The pitchfork-tracked PID is a supervisor (``mise run start`` -> honcho) — the
+    actual listening socket belongs to a grandchild it spawned (e.g. bench's own
+    werkzeug reloader worker), never the tracked PID itself. Must walk the whole
+    process tree, not just the one PID, or every daemon reads as "orphaned".
+    """
     try:
         proc = psutil.Process(pid)
-        return any(
-            conn.status == psutil.CONN_LISTEN and conn.laddr and conn.laddr.port == port
-            for conn in proc.net_connections(kind="inet")
-        )
-    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+    except psutil.NoSuchProcess:
         return None
+
+    inspected = False
+    for candidate in (proc, *proc.children(recursive=True)):
+        try:
+            conns = candidate.net_connections(kind="inet")
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            continue
+        inspected = True
+        if any(conn.status == psutil.CONN_LISTEN and conn.laddr and conn.laddr.port == port for conn in conns):
+            return True
+    return False if inspected else None
 
 
 def _ping_frappe(site_domain: str, port: int) -> dict:
