@@ -61,6 +61,50 @@ def test_setup_status_none_when_db_call_fails(tmp_path: Path) -> None:
     assert response.get_json()["setup_complete"] is None
 
 
+def test_reset_wizard_404_when_site_missing(tmp_path: Path) -> None:
+    bench_root = tmp_path / "app"
+    client = _client(bench_root)
+
+    response = client.post("/api/v1/sites/ghost.localhost/wizard/reset")
+
+    assert response.status_code == 404
+
+
+def test_reset_wizard_runs_flags_script_then_cache_calls(tmp_path: Path) -> None:
+    bench_root = tmp_path / "app"
+    client = _client(bench_root)
+    _write_site(bench_root)
+
+    completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+    with patch("admin.backend.api.v1.sites.wizard.subprocess.run", return_value=completed) as run:
+        response = client.post("/api/v1/sites/s.localhost/wizard/reset")
+
+    assert response.status_code == 200
+    assert response.get_json()["setup_complete"] is False
+    assert run.call_count == 3
+    flags_call = run.call_args_list[0].args[0]
+    assert flags_call[0] == str(bench_root / "env" / "bin" / "python")
+    assert flags_call[3] == "s.localhost"
+    assert run.call_args_list[0].kwargs["cwd"] == str(bench_root / "sites")
+
+
+def test_reset_wizard_fails_when_flags_script_errors(tmp_path: Path) -> None:
+    """The flags reset (System Settings.setup_complete) must succeed on every version -
+    it's the only thing frappe.setup_complete() actually gates on for v12. If it errors
+    (e.g. an AttributeError from a version mismatch, caught live once already), surface
+    that instead of silently reporting success."""
+    bench_root = tmp_path / "app"
+    client = _client(bench_root)
+    _write_site(bench_root)
+
+    completed = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="AttributeError: boom")
+    with patch("admin.backend.api.v1.sites.wizard.subprocess.run", return_value=completed) as run:
+        response = client.post("/api/v1/sites/s.localhost/wizard/reset")
+
+    assert response.status_code == 502
+    assert run.call_count == 1
+
+
 def test_run_wizard_404_when_site_missing(tmp_path: Path) -> None:
     bench_root = tmp_path / "app"
     client = _client(bench_root)

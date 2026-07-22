@@ -115,22 +115,60 @@ def _read_setup_complete(bench_root: Path, name: str) -> bool | None:
         return None
 
 
+def _reset_wizard_flags(bench_root: Path, name: str) -> subprocess.CompletedProcess:
+    """Undo everything ``disable_future_access()`` (frappe/desk/page/setup_wizard/
+    setup_wizard.py) sets when the wizard completes, so it can be run again from
+    scratch.
+
+    Three things get flipped there, all three must go back:
+
+    - ``desktop:home_page`` default -> back to ``"setup-wizard"``. This is what
+      actually drives the desk redirect on open (``boot.py``'s ``add_home_page``
+      resolves ``bootinfo.home_page`` from this default): resetting only
+      ``setup_complete`` left the desk boot fine but ``home_page`` still pointing
+      at the normal desktop, so opening the site landed on the last module
+      instead of the wizard — confirmed live, this was the actual reported bug.
+    - ``System Settings.setup_complete`` -> 0. ``setup_complete()`` gates on this
+      on every version. ``frappe.db.set_single_value`` is the only supported way
+      to write a Single doctype field since v15 (``set_value`` was dropped for
+      Singles); v12 has the opposite problem — ``set_single_value`` doesn't exist
+      yet, only ``set_value`` (confirmed live: v12 raised ``AttributeError`` on
+      ``set_single_value``). Both covered via a ``hasattr`` fallback.
+    - ``Installed Application.is_setup_complete`` -> 0. v13+ additionally short
+      circuits via ``frappe.is_setup_complete()``, which reads this per-app flag —
+      resetting only ``System Settings`` left that guard tripped there too.
+      Neither the function nor that doctype field exist on v12 (confirmed
+      empirically), so it's only reset when the hook is present.
+    """
+    python = bench_root / "env" / "bin" / "python"
+    program = (
+        "import sys, frappe\n"
+        "frappe.init(site=sys.argv[1], sites_path='.')\n"
+        "frappe.connect()\n"
+        "frappe.db.set_default('desktop:home_page', 'setup-wizard')\n"
+        "if hasattr(frappe.db, 'set_single_value'):\n"
+        "    frappe.db.set_single_value('System Settings', 'setup_complete', 0)\n"
+        "else:\n"
+        "    frappe.db.set_value('System Settings', 'System Settings', 'setup_complete', 0)\n"
+        "if hasattr(frappe, 'is_setup_complete'):\n"
+        "    frappe.db.set_value('Installed Application', {'is_setup_complete': 1}, 'is_setup_complete', 0)\n"
+        "frappe.db.commit()\n"
+    )
+    return subprocess.run(
+        [str(python), "-c", program, name],
+        cwd=str(bench_root / "sites"),
+        capture_output=True,
+        text=True,
+        timeout=_BENCH_EXECUTE_TIMEOUT_SECONDS,
+        check=False,
+    )
+
+
 @sites_bp.post("/<name>/wizard/reset")
 @require_scope(site_name)
 def reset_wizard(name: str):
-    """Undo both flags the wizard flips, so it can be run again from scratch.
-
-    ``setup_complete()`` (frappe/desk/page/setup_wizard/setup_wizard.py) short
-    circuits via ``frappe.is_setup_complete()``, which reads per-app
-    ``Installed Application.is_setup_complete`` — NOT ``System
-    Settings.setup_complete``. Resetting only the latter (what this admin
-    displays) left the guard still tripped: re-running the wizard silently
-    no-op'd and never restored the display flag. Both must go back to 0.
-
-    ``frappe.db.set_single_value`` is the only supported way to write a Single
-    doctype field since v15 (``frappe.db.set_value`` was dropped for Singles);
-    ``Installed Application`` is a regular doctype, so ``set_value`` is correct
-    there — mirrors ``enable_setup_wizard_complete()`` in the same source file.
+    """Reset the site's setup-wizard flags so it can be run again. See
+    ``_reset_wizard_flags`` for what gets reset and why.
 
     ``get_setup_wizard_completed_apps()`` (frappe/core/doctype/installed_applications)
     reads the "Installed Applications" doc through ``frappe.client_cache``, a
@@ -141,18 +179,16 @@ def reset_wizard(name: str):
     stage as "already complete", so the flag it never re-derives from stays 0
     forever. Key format is ``frappe.get_document_cache_key`` — internal/
     undocumented, but there's no public API for this specific invalidation.
+    Only relevant on v13+ (client_cache doesn't exist on v12 either); the
+    subprocess result below is intentionally not checked, same as before.
     """
     bench_root = Path(current_app.config["BENCH_ROOT"])
     if not site_exists(bench_root, name):
         return site_not_found()
     try:
-        for method, args_json in (
-            ("set_single_value", '["System Settings", "setup_complete", 0]'),
-            ("set_value", '["Installed Application", {"is_setup_complete": 1}, "is_setup_complete", 0]'),
-        ):
-            result = _run_db_method(bench_root, name, method, args_json)
-            if result.returncode != 0:
-                return error_response("reset_failed", result.stderr.strip() or "bench execute failed", 502)
+        result = _reset_wizard_flags(bench_root, name)
+        if result.returncode != 0:
+            return error_response("reset_failed", result.stderr.strip() or "reset failed", 502)
         cache_key = "document_cache::Installed Applications::Installed Applications"
         bench = shutil.which("bench") or "bench"
         subprocess.run(
