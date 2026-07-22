@@ -13,6 +13,8 @@
                 placeholder="https://github.com/frappe/crm" />
               <Combobox v-if="fetched" label="Branch" v-model="branch" :options="branchOptions"
                 placeholder="Search branches…" class="w-40 shrink-0" />
+              <FormControl v-else-if="branchesUnavailable" label="Branch" type="text" v-model="branch"
+                placeholder="main" class="w-40 shrink-0" />
               <Button v-else variant="subtle" class="shrink-0" :loading="fetching" :disabled="!repo.trim()"
                 @click="fetchBranches">
                 Fetch branches
@@ -48,6 +50,9 @@
           </template>
         </div>
 
+        <p v-if="branchesUnavailable" class="text-ink-gray-5 text-sm">
+          Couldn't list branches for this repository (only GitHub is supported for that) - enter one yourself.
+        </p>
         <p v-if="resolving" class="text-ink-gray-5 text-sm">Checking repository…</p>
         <p v-else-if="foundName" class="flex items-center gap-1.5 text-ink-green-6 text-sm">
           <span class="size-4 lucide-circle-check"></span>
@@ -90,6 +95,7 @@ const repo = ref('')
 const branch = ref('')
 const fetched = ref(false)
 const fetching = ref(false)
+const branchesUnavailable = ref(false)
 const branches = ref([])
 const branchOptions = computed(() => branches.value.map((b) => ({ label: b, value: b })))
 
@@ -123,6 +129,8 @@ watch(open, (isOpen) => {
 watch(tab, reset)
 watch(repo, () => {
   fetched.value = false
+  branchesUnavailable.value = false
+  branch.value = ''
   branches.value = []
   foundName.value = ''
   manualName.value = ''
@@ -132,6 +140,7 @@ function reset() {
   repo.value = ''
   branch.value = ''
   fetched.value = false
+  branchesUnavailable.value = false
   branches.value = []
   foundName.value = ''
   manualName.value = ''
@@ -142,6 +151,7 @@ function reset() {
 async function loadBranchesFor(url) {
   fetching.value = true
   error.value = ''
+  branchesUnavailable.value = false
   try {
     const d = await gitApi.branches(url)
     if (d.branches) {
@@ -149,10 +159,10 @@ async function loadBranchesFor(url) {
       branch.value = d.branches[0] || ''
       fetched.value = true
     } else {
-      error.value = apiErrorMessage(d, 'Could not load branches.')
+      branchesUnavailable.value = true
     }
-  } catch (e) {
-    error.value = e.message
+  } catch {
+    branchesUnavailable.value = true
   } finally {
     fetching.value = false
   }
