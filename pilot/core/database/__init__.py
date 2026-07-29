@@ -61,7 +61,7 @@ def make_site_database(bench_root: Path | str, site_name: str) -> Database:
         return PostgreSQL(
             host=config.get("db_host", "localhost"),
             port=int(config.get("db_port", 5432)),
-            user=config["db_user"],
+            user=config.get("db_user") or config["db_name"],
             password=config["db_password"],
             database=config["db_name"],
         )
@@ -72,7 +72,7 @@ def make_site_database(bench_root: Path | str, site_name: str) -> Database:
     return MariaDB(
         host=config.get("db_host", "localhost"),
         port=int(config.get("db_port", 3306)),
-        user=config["db_user"],
+        user=config.get("db_user") or config["db_name"],
         password=config["db_password"],
         database=config["db_name"],
         socket=config.get("db_socket") or None,

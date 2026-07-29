@@ -313,6 +313,32 @@ def test_make_site_database_defaults_to_mariadb(tmp_path: Path) -> None:
     assert isinstance(db, MariaDB)
 
 
+def test_make_site_database_mariadb_user_defaults_to_db_name(tmp_path: Path) -> None:
+    # Frappe does not write db_user to site_config.json — it derives the DB user
+    # from db_name (the _<hash> user created at new-site). Missing db_user must
+    # fall back to db_name rather than raise KeyError, which Pilot otherwise
+    # reads as the site being "broken".
+    _write_site_config(
+        tmp_path,
+        "fresite.local",
+        {"db_type": "mariadb", "db_name": "_abc123", "db_password": "pw"},
+    )
+    db = make_site_database(tmp_path, "fresite.local")
+    assert isinstance(db, MariaDB)
+    assert db._user == "_abc123"
+
+
+def test_make_site_database_postgres_user_defaults_to_db_name(tmp_path: Path) -> None:
+    _write_site_config(
+        tmp_path,
+        "frpg.local",
+        {"db_type": "postgres", "db_name": "_xyz789", "db_password": "pw"},
+    )
+    db = make_site_database(tmp_path, "frpg.local")
+    assert isinstance(db, PostgreSQL)
+    assert db._user == "_xyz789"
+
+
 def test_make_site_database_raises_for_missing_site(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError, match="ghost"):
         make_site_database(tmp_path, "ghost")
