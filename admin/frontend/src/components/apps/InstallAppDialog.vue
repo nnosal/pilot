@@ -108,7 +108,11 @@ async function startInstall(site) {
   const result = await sitesApi.apps.install(site.name, {
     app: props.app.name,
     repo: props.app.repo,
-    branch: props.app.branch || '',
+    // props.app is a marketplace Resolver dict: it carries the fork-resolved
+    // branch under `target` (e.g. dokos v3.x.x-hotfix on a v14 bench), not
+    // `branch`. Sending an empty branch cloned the repo default (develop,
+    // requires-python>=3.14) and failed the py3.10 v14 bench.
+    branch: props.app.target || '',
   })
   if (!result.task_id) throw new Error(apiErrorMessage(result, `Could not install on ${site.name}.`))
   return result.task_id
