@@ -28,6 +28,44 @@ class AppDependencyInstaller:
         self._install_missing(resolver, on_progress)
         return self._dependency_apps(resolver)
 
+    def install_required_apps(self, on_progress: Callable[[str], None] = lambda message: None) -> list["App"]:
+        """Install apps this app declares as ``required_apps`` in its hooks.
+
+        Frappe's ``install-app`` iterates ``required_apps`` but needs them already
+        present on disk (cloned + pip-installed), otherwise it dies on
+        ``No module named '<app>'``. The marketplace registry's ``require`` field
+        only sometimes mirrors hooks, so read the runtime source of truth and
+        install any missing required app via the resolver (correct fork branch)
+        before the caller's install-app runs. Covers erpnext->payments,
+        bookings->blog, etc. without per-app hardcoding.
+        """
+        from pilot.config import AppConfig
+        from pilot.core.app import App
+        from pilot.core.app.validator.dependency_declarations import DependencyDeclarationsCheck
+
+        installed: list[App] = []
+        try:
+            required = DependencyDeclarationsCheck().get_hooks_required_apps(self.app)
+        except Exception:
+            return installed
+        for name in required:
+            if name == "frappe" or self.bench.is_app_installed(name):
+                continue
+            on_progress(f"Installing required app '{name}'...")
+            try:
+                resolver = Marketplace(self.bench).find_app(name)
+            except AppNotFoundError:
+                # Not in the marketplace; let the caller's install-app surface it.
+                continue
+            dependency = App(AppConfig(name=resolver.app, repo=resolver.repo, branch=resolver.target), self.bench)
+            # install_dependencies=False avoids re-running marketplace resolution here;
+            # install_required_apps is called again inside install(), so a required
+            # app's own required_apps are still pulled in (recursion breaks on
+            # is_app_installed once each lands).
+            dependency.install(install_dependencies=False, skip_validations=True, on_progress=on_progress)
+            installed.append(dependency)
+        return installed
+
     def _find_resolver(self) -> Resolver | None:
         try:
             return Marketplace(self.bench).find_app(self.app.config.name)

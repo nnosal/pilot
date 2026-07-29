@@ -225,14 +225,27 @@ class Marketplace:
 
     @classmethod
     def _frappeverse_fallback_target(cls, app_name: str, current_frappe: Version) -> dict | None:
-        versions = cls._frappeverse_catalog().get(app_name)
+        entry = next((e for e in cls._frappeverse_entries() if e.get("name") == app_name), None)
+        if entry is None:
+            return None
+        versions = [str(v) for v in (entry.get("frappe_versions") or [])]
         major = current_frappe.major
         if not versions or str(major) not in versions:
             return None
+        # Only pick the version-N branch when the app actually ships it; some
+        # apps are single-branch and vN-compatible via their default branch
+        # (e.g. frappe-better-list-view has only "main" but targets v12).
+        version_branch = f"version-{major}"
+        branches = entry.get("branches") or []
+        target = (
+            version_branch
+            if version_branch in branches
+            else (entry.get("default_branch") or entry.get("branch") or "")
+        )
         return {
             "version": str(major),
             "target_type": "branch",
-            "target": f"version-{major}",
+            "target": target,
             "frappe_core": f">={major}.0.0,<{major + 1}.0.0",
             "dependencies": {},
         }

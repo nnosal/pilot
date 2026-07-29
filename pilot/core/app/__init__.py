@@ -157,12 +157,14 @@ class App:
         if self.bench.is_app_installed(self.config.name):
             app = self.bench.app(self.module_name)
             dependencies = app._install_dependencies(on_progress) if install_dependencies else []
+            dependencies += app._install_required_apps(on_progress)
             on_progress(f"'{app.config.name}' already installed, skipping.")
             return AppInstallResult(app, already_installed=True, installed_dependencies=dependencies)
 
         app, cloned_this_run = self._clone_and_normalize(on_progress)
         try:
             dependencies = app._install_dependencies(on_progress) if install_dependencies else []
+            dependencies += app._install_required_apps(on_progress)
             if not skip_validations:
                 app._validate()
         except BenchError:
@@ -201,6 +203,11 @@ class App:
         from pilot.core.app.dependency_installer import AppDependencyInstaller
 
         return AppDependencyInstaller(self.bench, self).install(on_progress)
+
+    def _install_required_apps(self, on_progress: Callable[[str], None]) -> list["App"]:
+        from pilot.core.app.dependency_installer import AppDependencyInstaller
+
+        return AppDependencyInstaller(self.bench, self).install_required_apps(on_progress)
 
     def _validate(self) -> None:
         from pilot.core.app.validator import Validator

@@ -5,9 +5,10 @@ import json
 import logging
 import re
 import shutil
+import subprocess
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from pilot.utils import extract_tar_archive, get_yarn_bin, git_has_local_changes, run_command
 
@@ -19,16 +20,48 @@ _BUNDLE_RE = re.compile(r"^(.+)\.bundle\.[A-Z0-9]{8}\.(js|css)$")
 
 
 class PythonAssetBuilder:
+    _force_support: ClassVar[dict[Path, bool]] = {}  # bench path -> whether `bench build` takes --force
+
     def __init__(self, manager: "PythonEnvManager") -> None:
         self.manager = manager
         self.bench = manager.bench
+
+    def _build_supports_force(self) -> bool:
+        # dokos-cli's bench fork dropped `bench build --force` (it has --restore
+        # instead); upstream frappe bench keeps it. Probe once per bench root so
+        # asset builds don't abort on the unsupported flag.
+        root = self.bench.path
+        if root in PythonAssetBuilder._force_support:
+            return PythonAssetBuilder._force_support[root]
+        try:
+            proc = subprocess.run(
+                [*self.bench.frappe_call, "frappe", "build", "--help"],
+                cwd=self.bench.sites_path,
+                env=self.manager._build_env(),
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            supported = "--force" in (proc.stdout or "")
+        except OSError:
+            supported = True  # assume upstream frappe bench if the probe itself fails
+        PythonAssetBuilder._force_support[root] = supported
+        return supported
+
+    def _build_args(self, app_name: str = "") -> list[str]:
+        args = [*self.bench.frappe_call, "frappe", "build"]
+        if self._build_supports_force():
+            args.append("--force")
+        if app_name:
+            args += ["--app", app_name]
+        return args
 
     def build_assets(self) -> None:
         for app in self.bench.apps():
             if (app.path / "package.json").exists():
                 self.ensure_yarn_install(app.path)
         run_command(
-            [*self.bench.frappe_call, "frappe", "build", "--force"],
+            self._build_args(),
             cwd=self.bench.sites_path,
             env=self.manager._build_env(),
             stream_output=True,
@@ -51,7 +84,7 @@ class PythonAssetBuilder:
         print(f"  Building assets for {app.config.name}...")
         sys.stdout.flush()
         run_command(
-            [*self.bench.frappe_call, "frappe", "build", "--force", "--app", app.config.name],
+            self._build_args(app.config.name),
             cwd=self.bench.sites_path,
             env=self.manager._build_env(),
             stream_output=True,
