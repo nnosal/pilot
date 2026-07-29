@@ -139,8 +139,8 @@ const router = useRouter()
 const siteName = route.params.name
 
 const { setBreadcrumbs } = useBreadcrumbs()
-const { site, loading, error, status, load, login, backup } = useSite(siteName)
-const { version, load: loadBench } = useBench()
+const { site, loading, error, status, load, login, backup, version } = useSite(siteName)
+const { load: loadBench } = useBench()
 const { session } = useSession()
 
 setBreadcrumbs([

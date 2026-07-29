@@ -6,6 +6,7 @@ guard, and the subprocess job lifecycle with a mocked Popen.
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 from pathlib import Path
@@ -173,6 +174,146 @@ def test_create_rejects_sqlite_below_v16(tmp_path: Path) -> None:
     assert response.get_json()["error"]["code"] == "invalid_db_engine"
 
 
+def test_create_rejects_postgres_below_v16(tmp_path: Path) -> None:
+    """postgres is a native frappe backend but only sound from v16 - same gate as
+    .config/mise/tasks/new step 3."""
+    bench_root = tmp_path / "host" / "app"
+    config_dir = bench_root.parent.parent / ".config" / "mise"
+    config_dir.mkdir(parents=True)
+    (config_dir / "config.v15.toml").write_text('FRAPPE_VERSION = "15"\n')
+
+    _, client = _client(bench_root, allow_mef=True)
+
+    response = client.post(
+        "/api/v1/mef/projects",
+        json={"profile": "v15", "db_engine": "postgres"},
+    )
+
+    assert response.status_code == 422
+    assert response.get_json()["error"]["code"] == "invalid_db_engine"
+
+
+def test_create_rejects_unknown_fork(tmp_path: Path) -> None:
+    bench_root = tmp_path / "host" / "app"
+    config_dir = bench_root.parent.parent / ".config" / "mise"
+    config_dir.mkdir(parents=True)
+    (config_dir / "config.v16.toml").write_text('FRAPPE_VERSION = "16-hotfix"\n')
+
+    _, client = _client(bench_root, allow_mef=True)
+
+    response = client.post("/api/v1/mef/projects", json={"profile": "v16", "fork": "bogus"})
+
+    assert response.status_code == 422
+    assert response.get_json()["error"]["code"] == "invalid_fork"
+
+
+def test_create_rejects_fork_missing_from_checkout(tmp_path: Path) -> None:
+    """A fork is a config.<fork>.toml overlay - without the file the task would fail
+    late, so reject it up front."""
+    bench_root = tmp_path / "host" / "app"
+    config_dir = bench_root.parent.parent / ".config" / "mise"
+    config_dir.mkdir(parents=True)
+    (config_dir / "config.v16.toml").write_text('FRAPPE_VERSION = "16-hotfix"\n')
+
+    _, client = _client(bench_root, allow_mef=True)
+
+    response = client.post("/api/v1/mef/projects", json={"profile": "v16", "fork": "dokos"})
+
+    assert response.status_code == 422
+    assert response.get_json()["error"]["code"] == "invalid_fork"
+
+
+def test_create_strips_host_project_env_from_spawned_job(tmp_path: Path) -> None:
+    """The daemon inherits its own project's .env from mise. A job creating another
+    project must not carry it over: DB_ENGINE is unset (commented) for the mariadb
+    default, so the host's postgres would win."""
+    bench_root = tmp_path / "host" / "app"
+    mef_root = bench_root.parent.parent
+    config_dir = mef_root / ".config" / "mise"
+    config_dir.mkdir(parents=True)
+    (config_dir / "config.v16.toml").write_text('FRAPPE_VERSION = "16-hotfix"\n')
+    _, client = _client(bench_root, allow_mef=True)
+    # after _client: it writes its own host .env
+    (bench_root.parent / ".env").write_text("DB_ENGINE = postgres\nDB_PORT = 8498\n#WEB_PORT = 1\n")
+
+    captured: dict = {}
+    release = threading.Event()
+
+    def fake_popen(args, cwd, env, stdout, stderr, start_new_session):
+        captured["env"] = dict(env)
+        return _stub_popen(returncode=0, block=release)(args, cwd, env, stdout, stderr, start_new_session)
+
+    with (
+        patch.dict(os.environ, {"DB_ENGINE": "postgres", "DB_PORT": "8498", "PATH": os.environ["PATH"]}),
+        patch("admin.backend.api.v1.mef.subprocess.Popen", side_effect=fake_popen),
+    ):
+        client.post("/api/v1/mef/projects", json={"profile": "v16", "directory": "child"})
+    release.set()
+
+    assert "DB_ENGINE" not in captured["env"]
+    assert "DB_PORT" not in captured["env"]
+    # commented keys are not inherited in the first place, and PATH must survive
+    assert captured["env"]["PATH"]
+
+
+def test_create_strips_mise_injected_env_from_spawned_job(tmp_path: Path) -> None:
+    """mise also injects the host project's config [env] tables (FRAPPE_REPO & co),
+    and the version profiles read FRAPPE_REPO back from the environment - a dokos
+    host would otherwise clone dodock into a plain frappe project."""
+    bench_root = tmp_path / "host" / "app"
+    config_dir = bench_root.parent.parent / ".config" / "mise"
+    config_dir.mkdir(parents=True)
+    (config_dir / "config.v16.toml").write_text('FRAPPE_VERSION = "16-hotfix"\n')
+
+    _, client = _client(bench_root, allow_mef=True)
+
+    captured: dict = {}
+    release = threading.Event()
+
+    def fake_popen(args, cwd, env, stdout, stderr, start_new_session):
+        captured["env"] = dict(env)
+        return _stub_popen(returncode=0, block=release)(args, cwd, env, stdout, stderr, start_new_session)
+
+    with (
+        patch.dict(os.environ, {"FRAPPE_REPO": "https://gitlab.com/dokos/dodock"}),
+        patch(
+            "admin.backend.api.v1.mef._host_injected_env_keys",
+            return_value={"FRAPPE_REPO", "FRAPPE_FORK"},
+        ),
+        patch("admin.backend.api.v1.mef.subprocess.Popen", side_effect=fake_popen),
+    ):
+        client.post("/api/v1/mef/projects", json={"profile": "v16", "directory": "child"})
+    release.set()
+
+    assert "FRAPPE_REPO" not in captured["env"]
+
+
+def test_host_injected_env_keys_covers_mise_config_env_tables(tmp_path: Path) -> None:
+    """The leak is not only the .env: config.<profile>.toml [env] tables reach the
+    daemon too, and that is where FRAPPE_REPO lives for a fork."""
+    bench_root = tmp_path / "host" / "app"
+    mise_dir = bench_root.parent.parent / ".config" / "mise"
+    mise_dir.mkdir(parents=True)
+    (mise_dir / "config.toml").write_text('[env]\nSHARED = "1"\n"_.file" = ".env"\n')
+    (mise_dir / "config.v16.toml").write_text('[env]\nFRAPPE_VERSION = "16-hotfix"\n')
+    (mise_dir / "config.dokos.toml").write_text('[env]\nFRAPPE_REPO = "https://gitlab.com/dokos/dodock"\n')
+
+    app, _ = _client(bench_root, allow_mef=True)
+    (bench_root.parent / ".miserc.toml").write_text('env = ["v16", "dokos"]\n')
+
+    with app.app_context():
+        keys = mef_module_keys()
+
+    assert {"SHARED", "FRAPPE_VERSION", "FRAPPE_REPO"} <= keys
+    assert "_.file" not in keys  # mise directive, not an env var
+
+
+def mef_module_keys() -> set:
+    import admin.backend.api.v1.mef as mef_module
+
+    return mef_module._host_injected_env_keys()
+
+
 def test_create_rejects_path_traversal_directory(tmp_path: Path) -> None:
     bench_root = tmp_path / "host" / "app"
     mef_root = bench_root.parent.parent
@@ -254,6 +395,7 @@ def test_create_spawns_headless_mise_new_and_streams_log(tmp_path: Path) -> None
                 "profile": "v16",
                 "directory": "_demo/x",
                 "db_engine": "sqlite",
+                "fork": "frappe",
                 "overlays": ["mcp"],
                 "new_run_setup": 1,
             },
@@ -272,6 +414,7 @@ def test_create_spawns_headless_mise_new_and_streams_log(tmp_path: Path) -> None
     assert captured["env"]["NEW_PROFILE"] == "v16"
     assert captured["env"]["NEW_DIR"] == "_demo/x"
     assert captured["env"]["NEW_DB_ENGINE"] == "sqlite"
+    assert captured["env"]["NEW_FORK"] == "frappe"
     # overlays list is joined into a comma-separated string
     assert captured["env"]["NEW_OVERLAYS"] == "mcp"
     assert captured["env"]["NEW_RUN_SETUP"] == "1"

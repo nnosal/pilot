@@ -21,7 +21,7 @@ from admin.backend.api.v1.sites.shared import (
     text_fields,
 )
 from admin.backend.middleware import rate_limit, require_scope
-from admin.backend.providers.apps import AppProvider
+from admin.backend.providers.apps import AppInfo, AppProvider
 from admin.backend.providers.sites import SiteInfo, SiteProvider
 from pilot.core.bench import Bench
 from pilot.internal.site_paths import site_config_path, site_exists
@@ -60,10 +60,12 @@ def detail(name: str):
 
     # Installable = apps that are cloned but not yet installed on this site
     try:
-        all_apps = [a.name for a in AppProvider(bench_root).get_all()]
-        installable = [a for a in all_apps if a not in site.installed_apps]
+        apps = AppProvider(bench_root).get_all()
+        installable = [a.name for a in apps if a.name not in site.installed_apps]
+        framework_branch = _framework_branch(apps)
     except Exception:
         installable = []
+        framework_branch = ""
 
     try:
         bench_config = Bench(bench_root).config
@@ -77,7 +79,7 @@ def detail(name: str):
 
     return jsonify(
         {
-            **_site_resource(site, bench_root),
+            **_site_resource(site, bench_root, framework_branch),
             "ssl": bool(site.site_config.get("ssl")),
             "installable_apps": installable,
             "http_port": http_port,
@@ -358,15 +360,26 @@ def _mcp_status(bench_root: Path, site: str) -> dict | None:
     }
 
 
-def _site_resource(site: SiteInfo, bench_root: Path) -> dict:
-    framework_branch = site.site_config.get("frappe_branch", "")
+def _site_resource(site: SiteInfo, bench_root: Path, framework_branch: str = "") -> dict:
     return {
         "name": site.name,
         "exists": site.exists,
         "installed_apps": [app for app in site.installed_apps if isinstance(app, str)],
-        "framework_branch": framework_branch if isinstance(framework_branch, str) else "",
+        "framework_branch": framework_branch,
         "broken": site.broken,
         "provisioning": site.provisioning,
         "slim": site.name in _slim_domains(bench_root),
         "mcp": _mcp_status(bench_root, site.name),
     }
+
+
+def _framework_branch(apps: list[AppInfo]) -> str:
+    """Frappe version for display: release branch ('version-16' -> 'Version 16'),
+    else the pip-installed version ('17.0.0.dev0' on develop), else the branch.
+    Empty when frappe isn't cloned."""
+    frappe = next((a for a in apps if a.name == "frappe"), None)
+    if frappe is None:
+        return ""
+    if re.match(r"version-\d+", frappe.branch):
+        return frappe.branch
+    return frappe.installed_version or frappe.branch

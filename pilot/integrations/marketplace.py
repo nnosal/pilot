@@ -10,6 +10,7 @@ from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.version import Version
 
 from pilot.exceptions import AppNotFoundError, DependencyResolutionError
+from pilot.integrations.forks import Fork, detect_fork
 from pilot.utils import run_command
 
 if typing.TYPE_CHECKING:
@@ -116,11 +117,24 @@ class Resolver:
 class Marketplace:
     bench: "Bench"
     frappe_version: str = field(default="", init=False)
+    fork: Fork | None = field(default=None, init=False)
 
     def __post_init__(self):
         self.frappe_version = self.get_current_frappe_version()
+        self.fork = detect_fork(self.bench.config.framework_app.repo)
+        self._fork_catalog = self._read_fork_catalog()
         # Snapshot at construction so callers see a consistent registry for this instance.
-        self._registry = self._parse_registry(json.loads(self._read_apps_json()))
+        registry = json.loads(self._read_apps_json())
+        registry += self._fork_only_entries({app["name"] for app in registry})
+        self._registry = self._parse_registry(registry)
+
+    @property
+    def upstream_frappe_version(self) -> str:
+        """The version registry `frappe_core` specs are written against - the bench's
+        own version unless it runs a fork with its own numbering."""
+        if not self.fork:
+            return self.frappe_version
+        return self.fork.to_upstream_version(self.frappe_version)
 
     @staticmethod
     def _read_apps_json() -> str:
@@ -163,39 +177,51 @@ class Marketplace:
 
     @staticmethod
     @lru_cache(maxsize=1)
-    def _frappeverse_catalog() -> dict[str, list[str]]:
-        """Best-effort app -> supported major Frappe versions, from a hand-curated
-        sibling catalog (../apps_frappeverse.json, next to this checkout's own
-        root - this pilot is meant to run from a mef-style .config/pilot layout).
+    def _frappeverse_entries() -> list[dict]:
+        """Every app entry of the hand-curated sibling catalog (../apps_frappeverse.json,
+        next to this checkout's own root - this pilot is meant to run from a mef-style
+        .config/pilot layout), flattened out of its nesting.
 
         The official marketplace registry (registry-cache/apps.json, a shallow
         clone of github.com/frappe/marketplace) stopped carrying targets for
-        Frappe 12-14: apps like erpnext/hrms still ship real version-12..
-        version-16 branches upstream, the registry just no longer lists them.
+        Frappe 12-14, and never carried fork ecosystems (dokos & co) at all.
         Any read/parse failure here just means no supplemental data - this file
         won't exist for anyone running pilot outside this repo, and that's not
         an error.
         """
         from pilot.utils import cli_root
 
-        catalog: dict[str, list[str]] = {}
+        entries: list[dict] = []
         try:
             raw = json.loads((cli_root().parent / "apps_frappeverse.json").read_text())
         except (OSError, json.JSONDecodeError):
-            return catalog
+            return entries
 
-        def walk(entries: object) -> None:
-            if not isinstance(entries, list):
+        def walk(nested: object) -> None:
+            if not isinstance(nested, list):
                 return
-            for entry in entries:
-                name, versions = entry.get("name"), entry.get("frappe_versions")
-                if name and versions:
-                    catalog[name] = [str(v) for v in versions]
+            for entry in nested:
+                if not isinstance(entry, dict):
+                    continue
+                if entry.get("name"):
+                    entries.append(entry)
                 walk(entry.get("app_available"))
                 walk(entry.get("other_app_available"))
+                walk(entry.get("require"))
 
         walk(raw)
-        return catalog
+        return entries
+
+    @classmethod
+    def _frappeverse_catalog(cls) -> dict[str, list[str]]:
+        """Best-effort app -> supported major Frappe versions, for majors the
+        official registry dropped: erpnext/hrms still ship real version-12..
+        version-16 branches upstream, the registry just no longer lists them."""
+        return {
+            entry["name"]: [str(v) for v in entry["frappe_versions"]]
+            for entry in cls._frappeverse_entries()
+            if entry.get("frappe_versions")
+        }
 
     @classmethod
     def _frappeverse_fallback_target(cls, app_name: str, current_frappe: Version) -> dict | None:
@@ -211,7 +237,82 @@ class Marketplace:
             "dependencies": {},
         }
 
+    def _read_fork_catalog(self) -> dict[str, dict]:
+        """Apps the running fork publishes, keyed by the name they install under.
+        The official registry carries no fork ecosystem, so the supplemental
+        catalog is the only source for them."""
+        if not self.fork:
+            return {}
+        catalog: dict[str, dict] = {}
+        for entry in self._frappeverse_entries():
+            if not self.fork.publishes(entry.get("url", "")) or entry.get("archived"):
+                continue
+            name = self.fork.app_name(entry["name"])
+            if name and name not in ("frappe", self.fork.cli_app):
+                catalog[name] = entry
+        return catalog
+
+    def _fork_branch(self, entry: dict | None) -> str:
+        """The fork branch for this bench's Frappe major, empty when the fork
+        ships nothing for it."""
+        if not self.fork:
+            return ""
+        branch = self.fork.branch_for(Version(self.upstream_frappe_version).major)
+        if entry and branch not in (entry.get("branches") or []):
+            return ""
+        return branch
+
+    def _fork_target(self, entry: dict) -> dict:
+        major = Version(self.upstream_frappe_version).major
+        requires = entry.get("require")
+        dependencies = (
+            {Fork.app_name(r["name"]): "" for r in requires if isinstance(r, dict) and r.get("name")}
+            if isinstance(requires, list)
+            else {}
+        )
+        frappe_core = f">={major}.0.0.dev0,<{major + 1}.0.0"
+        return {
+            "target_type": "branch",
+            "target": self._fork_branch(entry),
+            "version": "",
+            "frappe_core": frappe_core,
+            "dependencies": dependencies,
+            "_spec": self._safe_spec(frappe_core),
+        }
+
+    def _fork_only_entries(self, upstream_names: set[str]) -> list[dict]:
+        """Registry entries for fork apps that have no upstream counterpart."""
+        return [
+            {
+                "name": name,
+                "repo": entry["url"],
+                "title": name.replace("_", " ").replace("-", " ").title(),
+                "description": entry.get("description", ""),
+                "targets": [self._fork_target(entry)],
+            }
+            for name, entry in self._fork_catalog.items()
+            if name not in upstream_names
+        ]
+
+    def _apply_fork(self, app: dict, target: dict) -> tuple[dict, dict]:
+        """Point an app the fork maintains at the fork's own repository and branch.
+        An empty target means the fork ships nothing for this Frappe major, which
+        makes the app non-installable rather than silently upstream."""
+        if not self.fork:
+            return app, target
+        entry = self._fork_catalog.get(app["name"])
+        repo = entry["url"] if entry else self.fork.repo_for(app["name"])
+        if not repo:
+            return app, target
+        title = f"{app.get('title') or app['name']} ({self.fork.title})"
+        return (
+            {**app, "repo": repo, "title": title},
+            {**target, "target_type": "branch", "target": self._fork_branch(entry)},
+        )
+
     def _make_resolver(self, app: dict, target: dict, is_installable: bool) -> "Resolver":
+        app, target = self._apply_fork(app, target)
+        is_installable = is_installable and bool(target.get("target"))
         return Resolver(
             app=app["name"],
             repo=app["repo"],
@@ -235,10 +336,13 @@ class Marketplace:
     def read_all_apps(self) -> list[Resolver]:
         resolvers = []
         dependency_lookup: dict[str, list[Resolver]] = {}
-        current_frappe = Version(self.frappe_version)
+        current_frappe = Version(self.upstream_frappe_version)
 
         for app in self._registry:
-            targets = app.get("targets") or []
+            # For an app the fork publishes, the fork's own branches decide
+            # compatibility - upstream's targets describe a repository we won't clone.
+            fork_entry = self._fork_catalog.get(app["name"])
+            targets = [self._fork_target(fork_entry)] if fork_entry else (app.get("targets") or [])
             compatible_targets = [t for t in targets if t["_spec"] and current_frappe in t["_spec"]]
             if not compatible_targets:
                 fallback = self._frappeverse_fallback_target(app["name"], current_frappe)

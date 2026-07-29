@@ -4,7 +4,8 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-from admin.backend.api.v1.sites.core import _mcp_status
+from admin.backend.api.v1.sites.core import _framework_branch, _mcp_status
+from admin.backend.providers.apps import AppInfo
 from tests.admin.backend.test_admin_app import _client
 
 
@@ -12,6 +13,24 @@ def _write_site(bench_root: Path, name: str) -> None:
     site_path = bench_root / "sites" / name
     site_path.mkdir(parents=True)
     (site_path / "site_config.json").write_text(json.dumps({"installed_apps": []}))
+
+
+def _frappe_app(**overrides) -> AppInfo:
+    fields = dict(
+        name="frappe",
+        title="Frappe Framework",
+        description="",
+        repo="",
+        branch="develop",
+        is_cloned=True,
+        current_commit="",
+        commit_message="",
+        has_local_changes=False,
+        installed_version="",
+        has_update=False,
+    )
+    fields.update(overrides)
+    return AppInfo(**fields)
 
 
 def test_delete_site_returns_accepted_task_resource(tmp_path: Path) -> None:
@@ -145,3 +164,34 @@ def test_site_creation_rejects_symlinked_sites_root(tmp_path: Path) -> None:
 
     assert create.status_code == 422
     queue.assert_not_called()
+
+
+def test_framework_branch_release_keeps_branch_name() -> None:
+    # 'version-16' must round-trip unchanged so the frontend regex renders 'Version 16'.
+    assert _framework_branch([_frappe_app(branch="version-16", installed_version="16.0.0")]) == "version-16"
+
+
+def test_framework_branch_develop_prefers_installed_version() -> None:
+    assert _framework_branch([_frappe_app(branch="develop", installed_version="17.0.0.dev0")]) == "17.0.0.dev0"
+
+
+def test_framework_branch_falls_back_to_branch_without_pip_metadata() -> None:
+    assert _framework_branch([_frappe_app(branch="develop", installed_version="")]) == "develop"
+
+
+def test_framework_branch_empty_when_frappe_absent() -> None:
+    other = _frappe_app(name="erpnext", branch="develop", installed_version="14.0.0")
+    assert _framework_branch([other]) == ""
+
+
+def test_detail_populates_framework_branch_from_frappe_app(tmp_path: Path) -> None:
+    bench_root = tmp_path / "benches" / "current"
+    client = _client(bench_root)
+    _write_site(bench_root, "s.localhost")
+    frappe = _frappe_app(branch="develop", installed_version="17.0.0.dev0")
+
+    with patch("admin.backend.api.v1.sites.core.AppProvider") as provider:
+        provider.return_value.get_all.return_value = [frappe]
+        body = client.get("/api/v1/sites/s.localhost").get_json()
+
+    assert body["framework_branch"] == "17.0.0.dev0"

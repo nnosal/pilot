@@ -5,15 +5,9 @@ import json
 import re
 from pathlib import Path
 
-from pilot.exceptions import BenchError
+from pilot.core.database import make_site_database
+from pilot.exceptions import BenchError, DatabaseError
 from pilot.internal.atomic_file import exclusive_file_lock, replace_private_text_locked
-
-_DB_SOCKET_CANDIDATES = [
-    "/var/run/mysqld/mysqld.sock",
-    "/run/mysqld/mysqld.sock",
-    "/tmp/mysql.sock",
-    "/usr/local/var/mysql/mysql.sock",
-]
 
 PROTECTED_CONFIG_KEYS = frozenset(
     {
@@ -53,81 +47,23 @@ _SENSITIVE_CONFIG_KEY_PARTS = (
 def list_installed_apps(site_config: dict, bench_root: Path, site_name: str) -> list[str]:
     if isinstance(site_config.get("installed_apps"), list):
         return site_config["installed_apps"]
-    apps = query_installed_apps_via_db(site_config)
+    apps = query_installed_apps_via_db(bench_root, site_name)
     if apps is not None:
         return apps
     return query_installed_apps_via_frappe(bench_root, site_name)
 
 
-def query_installed_apps_via_db(site_config: dict) -> list[str] | None:
-    import shutil
+def query_installed_apps_via_db(bench_root: Path, site_name: str) -> list[str] | None:
+    """Read installed apps straight from the site DB via the dialect-aware engine.
 
-    db_name = site_config.get("db_name", "")
-    db_password = site_config.get("db_password", "")
-    db_host = site_config.get("db_host") or "localhost"
-    db_port = int(site_config.get("db_port") or 3306)
-    if not db_name or not db_password:
-        return None
-
-    cli = shutil.which("mariadb") or shutil.which("mysql")
-    if not cli:
-        return None
-
-    conn_args = [f"--user={db_name}", f"--password={db_password}"]
-    if db_host in ("localhost", "127.0.0.1", ""):
-        socket_path = next((socket for socket in _DB_SOCKET_CANDIDATES if Path(socket).exists()), None)
-        if socket_path:
-            conn_args.append(f"--socket={socket_path}")
-        else:
-            conn_args += ["--host=127.0.0.1", f"--port={db_port}"]
-    else:
-        conn_args += [f"--host={db_host}", f"--port={db_port}"]
-
-    apps = _query_apps_table(cli, conn_args, db_name)
-    if apps is None:
-        return None
-    if apps:
-        return apps
-    # Frappe < v13 never populated `tabInstalled Application`; it tracked installed
-    # apps as a JSON list in the `installed_apps` global default instead.
-    return _query_installed_apps_default(cli, conn_args, db_name)
-
-
-def _run_sql(cli: str, conn_args: list[str], db_name: str, sql: str) -> str | None:
-    import subprocess
-
+    Returns None when the site config or DB credentials are missing or the
+    connection fails, so callers can fall back to slower methods (e.g. frappe
+    list-apps). KeyError covers missing db_user/db_password in site_config.json.
+    """
     try:
-        result = subprocess.run(
-            [cli, *conn_args, "--batch", "--skip-column-names", db_name, "-e", sql],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-    except Exception:
+        return make_site_database(bench_root, site_name).get_installed_apps()
+    except (DatabaseError, FileNotFoundError, KeyError):
         return None
-    return result.stdout if result.returncode == 0 else None
-
-
-def _query_apps_table(cli: str, conn_args: list[str], db_name: str) -> list[str] | None:
-    stdout = _run_sql(cli, conn_args, db_name, "SELECT app_name FROM `tabInstalled Application` ORDER BY idx")
-    if stdout is None:
-        return None
-    return [line.strip() for line in stdout.splitlines() if line.strip()]
-
-
-def _query_installed_apps_default(cli: str, conn_args: list[str], db_name: str) -> list[str] | None:
-    sql = "SELECT defvalue FROM `tabDefaultValue` WHERE defkey='installed_apps' AND parent='__global' LIMIT 1"
-    stdout = _run_sql(cli, conn_args, db_name, sql)
-    if stdout is None:
-        return None
-    value = stdout.strip()
-    if not value:
-        return []
-    try:
-        apps = json.loads(value)
-    except json.JSONDecodeError:
-        return []
-    return [app for app in apps if isinstance(app, str)]
 
 
 def set_site_ssl_flag(sites_root: Path, site_name: str, enabled: bool) -> None:

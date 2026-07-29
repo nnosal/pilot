@@ -32,6 +32,7 @@ class GetAndInstallAppTask(Task):
         # Frappe cascades dependency installs on sites, but not asset builds.
         self.install_on_sites(result.app)
         self.build_assets([result.app, *result.installed_dependencies])
+        self.restart_workload()
 
     @step("fetch", lambda self: f"Fetch {self.marketplace_app or self.repo}")
     def fetch(self) -> AppInstallResult:
@@ -52,6 +53,18 @@ class GetAndInstallAppTask(Task):
             safe_key = site.replace(".", "_").replace("-", "_")
             with self.step(f"install_{safe_key}_{app.config.name}", f"Install {app.config.name} on {site}"):
                 self.bench.site(site).install_app(app)
+
+    @step("restart", "Restart bench")
+    def restart_workload(self) -> None:
+        """Processes started before the pip install can't import the new app: every
+        request and background job fails with ModuleNotFoundError until they are
+        recycled. Restarts whatever supervises this bench, dev runner included."""
+        from pilot.core.bench.settings import restart_running_workload
+
+        if restart_running_workload(self.bench):
+            self.report("Bench processes restarted.")
+        else:
+            self.report("No running bench processes found - restart yours to load the new app.")
 
     def build_assets(self, apps: list[App]) -> None:
         from pilot.managers.environment import PythonEnvManager

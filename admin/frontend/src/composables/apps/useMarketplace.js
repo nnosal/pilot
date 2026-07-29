@@ -29,6 +29,11 @@ export function isFrappeApp(app) {
   return Boolean(app.repo?.includes('github.com/frappe/'))
 }
 
+export function repoOwner(repo) {
+  const match = /^(?:https?:\/\/|git@)[^/:]+[/:]([^/]+)\//.exec(repo || '')
+  return match ? match[1].toLowerCase() : ''
+}
+
 function sortApps(a, b) {
   if (a.installed !== b.installed) return a.installed ? -1 : 1
   const as = a.stars ?? -1
@@ -53,6 +58,7 @@ export function useMarketplace(initialSiteName = '') {
   const sites = ref([])
   const currentSiteName = ref('')
   const benchApps = ref([])
+  const frameworkRepo = ref('')
 
   async function load() {
     loading.value = true
@@ -67,6 +73,7 @@ export function useMarketplace(initialSiteName = '') {
       registry.value = registryData.filter((app) => app.name !== 'frappe')
       benchApps.value = installed
       benchName.value = settings.bench?.name || 'this bench'
+      frameworkRepo.value = settings.bench?.framework_repo || ''
       const benchBranch =
         parseBenchBranch(settings.bench?.default_branch) ||
         parseBenchBranch(installed.find((app) => app.name === 'frappe')?.branch)
@@ -136,9 +143,20 @@ export function useMarketplace(initialSiteName = '') {
   const isFiltered = computed(() => selectedPill.value !== 'All' || Boolean(worksWith.value))
   const filteredApps = computed(() => [...matchingApps.value].sort(sortApps))
 
+  // A fork bench (dodock, ...) gets its own section: apps published by the same
+  // owner as the framework repo are that distribution's, not third-party.
+  const forkOwner = computed(() => {
+    const owner = repoOwner(frameworkRepo.value)
+    return owner === 'frappe' ? '' : owner
+  })
+  const forkLabel = computed(() => toSentenceCase(forkOwner.value))
+
+  const isForkApp = (app) => Boolean(forkOwner.value) && repoOwner(app.repo) === forkOwner.value
+
   const frappeApps = computed(() => matchingApps.value.filter(isFrappeApp).sort(sortApps))
+  const forkApps = computed(() => matchingApps.value.filter(isForkApp).sort(sortApps))
   const communityApps = computed(() =>
-    matchingApps.value.filter((app) => !isFrappeApp(app)).sort(sortApps),
+    matchingApps.value.filter((app) => !isFrappeApp(app) && !isForkApp(app)).sort(sortApps),
   )
 
   const registryNames = computed(() => new Set(registry.value.map((app) => app.name)))
@@ -168,6 +186,8 @@ export function useMarketplace(initialSiteName = '') {
     benchVersion,
     benchVersionLabel,
     frappeApps,
+    forkApps,
+    forkLabel,
     communityApps,
     load,
     sites,

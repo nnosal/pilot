@@ -18,6 +18,19 @@ class SiteApps:
         self.site = site
 
     def install_app(self, app: "App") -> None:
+        # Pilot runs as a long-lived frappe process, so its redis cache (doctype controller AND
+        # value layers) holds lookups made before this app existed. install-app's after_install
+        # then reads a stale "not found" for a referenced doctype (module defaults to Core) and
+        # import fails on moved/removed doctypes (frappe 17 currency_exchange_settings).
+        # frappe.clear_cache / clear_doctype_cache don't reach the value-cache layer — only a
+        # redis flushall does. mef uses a per-project redis, so this is scoped to the project.
+        import subprocess
+
+        subprocess.run(
+            ["redis-cli", "-p", str(self.site.bench.config.redis.cache_port), "flushall"],
+            capture_output=True,
+            check=False,
+        )
         run_command(
             self.site._frappe_call("frappe", "--site", self.site.config.name, "install-app", app.config.name),
             cwd=self.site.bench.sites_path,

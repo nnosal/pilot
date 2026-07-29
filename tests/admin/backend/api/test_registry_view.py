@@ -477,6 +477,70 @@ def test_read_db_status_unknown_on_timeout() -> None:
         assert _read_db_status(Path("/tmp/whatever")) == "unknown"
 
 
+def test_read_db_status_postgres_running() -> None:
+    """pg_ctl status (postgres): 'server is running' → running."""
+    from admin.backend.api.v1.registry import _read_db_status
+
+    with patch(
+        "admin.backend.api.v1.registry.subprocess.run",
+        return_value=_fake_completed("pg_ctl: server is running (PID: 1394)\n"),
+    ):
+        assert _read_db_status(Path("/tmp/whatever"), db_engine="postgres") == "running"
+
+
+def test_read_db_status_postgres_stopped() -> None:
+    """pg_ctl status (postgres): 'no server running' → stopped."""
+    from admin.backend.api.v1.registry import _read_db_status
+
+    with patch(
+        "admin.backend.api.v1.registry.subprocess.run",
+        return_value=_fake_completed("pg_ctl: no server running\n"),
+    ):
+        assert _read_db_status(Path("/tmp/whatever"), db_engine="postgres") == "stopped"
+
+
+def test_read_db_status_postgres_unknown_on_garbage() -> None:
+    from admin.backend.api.v1.registry import _read_db_status
+
+    with patch(
+        "admin.backend.api.v1.registry.subprocess.run",
+        return_value=_fake_completed(""),
+    ):
+        assert _read_db_status(Path("/tmp/whatever"), db_engine="postgres") == "unknown"
+
+
+def test_read_db_status_defaults_to_mariadb_parsing() -> None:
+    """Non-regression: explicit mariadb dialect keeps the ' on'/' off' parsing."""
+    from admin.backend.api.v1.registry import _read_db_status
+
+    with patch(
+        "admin.backend.api.v1.registry.subprocess.run",
+        return_value=_fake_completed("[db:status] $ ...\ntest2 on\n"),
+    ):
+        assert _read_db_status(Path("/tmp/whatever"), db_engine="mariadb") == "running"
+
+
+def test_project_db_status_reads_postgres_dialect_from_env(tmp_path: Path) -> None:
+    """DB_ENGINE=postgres in the sibling .env selects pg_ctl parsing end-to-end."""
+    bench_root = tmp_path / "host" / "app"
+    mef_root = bench_root.parent.parent
+    _seed_project(
+        mef_root / "v16-frappe",
+        profile="v16",
+        env="PROJECT_NAME=app\nDB_ENGINE=postgres\n",
+    )
+    _, client = _client(bench_root, allow_mef=True)
+
+    completed = subprocess.CompletedProcess(
+        args=[], returncode=0, stdout="pg_ctl: server is running (PID: 1394)\n", stderr=""
+    )
+    with patch("admin.backend.api.v1.registry.subprocess.run", return_value=completed):
+        response = client.get("/api/v1/mef/projects/v16-frappe/db-status")
+
+    assert response.status_code == 200
+    assert response.get_json() == {"status": "running"}
+
+
 def test_project_db_status_refused_when_allow_mef_management_false(tmp_path: Path) -> None:
     bench_root = tmp_path / "host" / "app"
     _, client = _client(bench_root, allow_mef=False)

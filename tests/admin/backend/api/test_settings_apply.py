@@ -110,3 +110,19 @@ def test_settings_success_has_no_legacy_error_fields(tmp_path: Path) -> None:
 
     assert response.status_code == 200
     assert response.get_json() == {"restarted": True}
+
+
+def test_settings_expose_framework_repo(tmp_path: Path) -> None:
+    """The marketplace groups apps by the framework repo's owner - a fork bench
+    needs its own vendor known, and the git remote is named 'upstream', not 'origin'."""
+    bench_root = tmp_path / "bench"
+    client = _client(bench_root)
+    toml_path = bench_root / "bench.toml"
+    config = BenchConfig.from_file(toml_path)
+    config.framework_app.repo = "https://gitlab.com/dokos/dodock"
+    toml_path.write_text(config.dumps())
+
+    response = client.get("/api/v1/settings")
+
+    assert response.status_code == 200
+    assert response.get_json()["bench"]["framework_repo"] == "https://gitlab.com/dokos/dodock"

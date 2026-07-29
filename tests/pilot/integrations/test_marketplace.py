@@ -306,6 +306,24 @@ SAMPLE_REGISTRY = [
         ],
     },
     {
+        "name": "helpdesk",
+        "repo": "https://github.com/frappe/helpdesk",
+        "title": "Helpdesk",
+        "description": "",
+        "logo_url": "",
+        "category": "Applications",
+        "stars": 100,
+        "targets": [
+            {
+                "target_type": "branch",
+                "target": "version-16",
+                "version": "16.0.0",
+                "frappe_core": ">=16.0.0,<17.0.0",
+                "dependencies": {},
+            },
+        ],
+    },
+    {
         "name": "old_app",
         "repo": "https://github.com/frappe/old_app",
         "title": "Old App",
@@ -326,9 +344,14 @@ SAMPLE_REGISTRY = [
 ]
 
 
-def make_marketplace(frappe_version: str, registry: list | None = None) -> Marketplace:
+def make_marketplace(
+    frappe_version: str,
+    registry: list | None = None,
+    framework_repo: str = "https://github.com/frappe/frappe",
+) -> Marketplace:
     bench = MagicMock()
     bench.env_path = Path("/fake/env")
+    bench.config.framework_app.repo = framework_repo
 
     import json
 
@@ -566,9 +589,9 @@ OLD_APP_ONLY_REGISTRY = [
 def _clear_frappeverse_cache():
     """The catalog is lru_cache'd across the whole process - reset it around
     every test so a mocked catalog in one test can't leak into the next."""
-    Marketplace._frappeverse_catalog.cache_clear()
+    Marketplace._frappeverse_entries.cache_clear()
     yield
-    Marketplace._frappeverse_catalog.cache_clear()
+    Marketplace._frappeverse_entries.cache_clear()
 
 
 def test_frappeverse_fallback_fills_gap_registry_has_no_target_for():
@@ -642,6 +665,181 @@ def test_frappeverse_catalog_walks_nested_app_available(tmp_path):
     assert catalog["erpnext"] == ["12", "13", "14", "15", "16"]
     assert catalog["hrms"] == ["14", "15", "16"]
     assert "frappe" not in catalog  # empty frappe_versions list - nothing to match against
+
+
+DODOCK_REPO = "https://gitlab.com/dokos/dodock"
+
+DOKOS_CATALOG = [
+    {
+        "name": "erpnext(dokos)",
+        "url": "https://gitlab.com/dokos/dokos",
+        "description": "ERP based on ERPNext, built on Dodock",
+        "branches": ["develop", "v4-fix", "v5-fix"],
+    },
+    {
+        "name": "hrms",
+        "url": "https://gitlab.com/dokos/hrms",
+        "description": "Dokos HRMS",
+        "branches": ["develop", "v4-fix"],
+    },
+    {
+        "name": "bank",
+        "url": "https://gitlab.com/dokos/bank",
+        "description": "Bank connection application for Dokos",
+        "branches": ["develop", "v4-fix"],
+        "require": [{"name": "bank_api", "url": "https://gitlab.com/dokos/bank-api"}],
+    },
+    {
+        "name": "bank_api",
+        "url": "https://gitlab.com/dokos/bank-api",
+        "description": "API middleware for the Bank application",
+        "branches": ["develop", "v4-fix"],
+    },
+    {
+        "name": "hiboutik",
+        "url": "https://gitlab.com/dokos/hiboutik",
+        "description": "Hiboutik connector",
+        "branches": ["v3.x.x-hotfix"],
+    },
+    {
+        "name": "abandoned",
+        "url": "https://gitlab.com/dokos/abandoned",
+        "description": "No longer maintained",
+        "branches": ["develop", "v4-fix"],
+        "archived": True,
+    },
+]
+
+
+def make_dokos_marketplace(
+    dodock_version: str,
+    registry: list | None = None,
+    catalog: list | None = DOKOS_CATALOG,
+) -> Marketplace:
+    with patch.object(Marketplace, "_frappeverse_entries", return_value=catalog or []):
+        return make_marketplace(dodock_version, registry, framework_repo=DODOCK_REPO)
+
+
+def test_fork_bench_matches_targets_against_upstream_version():
+    """dodock 5.x is Frappe 16 - without translation nothing in the registry matches."""
+    mp = make_dokos_marketplace("5.0.0")
+    helpdesk = next(a for a in mp.read_all_apps() if a.app == "helpdesk")
+    assert helpdesk.is_installable is True
+    assert helpdesk.version == "16.0.0"
+
+
+def test_fork_published_app_carries_no_upstream_version_number():
+    """A dokos app's version is not frappe's - showing the upstream number would lie."""
+    mp = make_dokos_marketplace("5.0.0")
+    erpnext = next(a for a in mp.read_all_apps() if a.app == "erpnext")
+    assert erpnext.is_installable is True
+    assert erpnext.version == ""
+
+
+def test_fork_bench_reports_its_own_frappe_version():
+    mp = make_dokos_marketplace("5.0.0")
+    assert mp.frappe_version == "5.0.0"
+    assert mp.upstream_frappe_version == "16.0.0"
+
+
+def test_upstream_bench_has_no_fork():
+    mp = make_marketplace("16.0.0")
+    assert mp.fork is None
+    assert mp.upstream_frappe_version == "16.0.0"
+
+
+def test_fork_app_points_at_fork_repository_and_branch():
+    mp = make_dokos_marketplace("5.0.0")
+    erpnext = next(a for a in mp.read_all_apps() if a.app == "erpnext")
+    assert erpnext.repo == "https://gitlab.com/dokos/dokos"
+    assert erpnext.target == "v5-fix"
+    assert erpnext.target_type == "branch"
+    assert erpnext.title == "ERPNext (Dokos)"
+
+
+def test_fork_overrides_upstream_app_it_also_publishes():
+    """dokos maintains its own hrms - a dodock bench must not get frappe's."""
+    mp = make_dokos_marketplace("4.0.0")
+    hrms = next(a for a in mp.read_all_apps() if a.app == "hrms")
+    assert hrms.repo == "https://gitlab.com/dokos/hrms"
+    assert hrms.target == "v4-fix"
+    assert hrms.is_installable is True
+
+
+def test_fork_leaves_apps_it_does_not_publish_on_upstream():
+    mp = make_dokos_marketplace("5.0.0", catalog=[])
+    erpnext = next(a for a in mp.read_all_apps() if a.app == "erpnext")
+    hrms = next(a for a in mp.read_all_apps() if a.app == "hrms")
+    # erpnext keeps the built-in floor, hrms has no fork counterpart at all
+    assert erpnext.repo == "https://gitlab.com/dokos/dokos"
+    assert hrms.repo == "https://github.com/frappe/hrms"
+
+
+def test_fork_only_apps_are_added_to_the_registry():
+    """The official registry carries no dokos app - they come from the catalog."""
+    mp = make_dokos_marketplace("4.0.0")
+    apps = {a.app: a for a in mp.read_all_apps()}
+    assert apps["bank"].repo == "https://gitlab.com/dokos/bank"
+    assert apps["bank"].target == "v4-fix"
+    assert apps["bank"].is_installable is True
+    assert apps["bank"].title == "Bank (Dokos)"
+
+
+def test_fork_only_app_requires_resolve_as_dependencies():
+    mp = make_dokos_marketplace("4.0.0")
+    bank = next(a for a in mp.read_all_apps() if a.app == "bank")
+    assert [r.app for r in bank.resolve()] == ["bank_api", "bank"]
+
+
+def test_fork_only_app_without_branch_for_major_is_not_installable():
+    """hiboutik only ships a v14-era branch - nothing to install on Frappe 15."""
+    mp = make_dokos_marketplace("4.0.0")
+    hiboutik = next(a for a in mp.read_all_apps() if a.app == "hiboutik")
+    assert hiboutik.is_installable is False
+    assert hiboutik.target == ""
+
+
+def test_fork_catalog_skips_archived_apps():
+    mp = make_dokos_marketplace("4.0.0")
+    assert all(a.app != "abandoned" for a in mp.read_all_apps())
+
+
+def test_fork_catalog_ignored_on_upstream_bench():
+    mp = make_marketplace("16.0.0")
+    assert all(a.app != "bank" for a in mp.read_all_apps())
+
+
+def test_fork_app_not_installable_when_fork_ships_no_branch_for_major():
+    """A compatible upstream target must not make the app installable from
+    github when the fork has nothing for that Frappe major."""
+    registry = [
+        {
+            "name": "erpnext",
+            "repo": "https://github.com/frappe/erpnext",
+            "title": "ERPNext",
+            "targets": [
+                {
+                    "target_type": "branch",
+                    "target": "version-18",
+                    "version": "18.0.0",
+                    "frappe_core": ">=18.0.0,<19.0.0",
+                    "dependencies": {},
+                },
+            ],
+        },
+    ]
+    mp = make_dokos_marketplace("7.0.0", registry)
+    erpnext = next(a for a in mp.read_all_apps() if a.app == "erpnext")
+    assert erpnext.is_installable is False
+    assert erpnext.repo == "https://gitlab.com/dokos/dokos"
+
+
+def test_fork_substitution_applies_to_dependency_registry_entries():
+    mp = make_dokos_marketplace("4.0.0")
+    apps = mp.read_all_apps()
+    dependency_entry = apps[0]._registry["erpnext"][0]
+    assert dependency_entry.repo == "https://gitlab.com/dokos/dokos"
+    assert dependency_entry.target == "v4-fix"
 
 
 def test_frappeverse_catalog_missing_file_returns_empty(tmp_path):

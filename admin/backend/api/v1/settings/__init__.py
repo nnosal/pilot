@@ -61,6 +61,7 @@ def build_settings_response(config: BenchConfig) -> dict:
             "http_port": config.http_port,
             "socketio_port": config.socketio_port,
             "default_branch": config.default_branch,
+            "framework_repo": config.framework_app.repo,
             "db_type": config.db_type,
             "apps_skip_validations": config.apps_skip_validations,
             "apps_skip_update_check": config.apps_skip_update_check,

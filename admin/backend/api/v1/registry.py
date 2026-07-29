@@ -303,10 +303,11 @@ def project_db_status(name: str):
     target, err = _resolve_sibling_project(name)
     if err is not None:
         return err
-    return jsonify({"status": _read_db_status(target)})
+    db_engine = _read_project_env(target).get("DB_ENGINE", "mariadb")
+    return jsonify({"status": _read_db_status(target, db_engine)})
 
 
-def _read_db_status(project_dir: Path) -> str:
+def _read_db_status(project_dir: Path, db_engine: str = "mariadb") -> str:
     try:
         result = subprocess.run(
             _mise_cmd(["db:status"]),
@@ -318,12 +319,28 @@ def _read_db_status(project_dir: Path) -> str:
         )
     except (OSError, subprocess.TimeoutExpired):
         return "unknown"
-    for line in result.stdout.splitlines():
+    if db_engine == "postgres":
+        return _parse_postgres_status(result.stdout)
+    return _parse_mariadb_status(result.stdout)
+
+
+def _parse_mariadb_status(stdout: str) -> str:
+    # dbdeployer mariadb sandbox status: a line ending " on"/" off".
+    for line in stdout.splitlines():
         stripped = line.strip()
         if stripped.endswith(" on"):
             return "running"
         if stripped.endswith(" off"):
             return "stopped"
+    return "unknown"
+
+
+def _parse_postgres_status(stdout: str) -> str:
+    # ``pg_ctl status`` output (mise db:status for postgres projects).
+    if "server is running" in stdout:
+        return "running"
+    if "no server running" in stdout or "is not running" in stdout:
+        return "stopped"
     return "unknown"
 
 

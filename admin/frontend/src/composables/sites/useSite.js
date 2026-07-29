@@ -142,7 +142,7 @@ export function useSite(name) {
   })
 
   const version = computed(() => {
-    const branch = store.site.value?.site_config?.frappe_branch
+    const branch = store.site.value?.framework_branch
     if (!branch) return ''
     const match = /^version-(\d+)/.exec(branch)
     return match ? `Version ${match[1]}` : branch

@@ -29,7 +29,10 @@
       :class="metadata.length > 3 ? 'sm:grid-cols-4' : 'sm:grid-cols-3'">
       <div v-for="item in metadata" :key="item.label">
         <p class="text-ink-gray-4 text-xs">{{ item.label }}</p>
-        <p class="mt-1 text-ink-gray-8 text-sm truncate">{{ item.value }}</p>
+        <p class="mt-1 text-ink-gray-8 text-sm truncate">
+          <router-link v-if="item.to" :to="item.to" class="hover:underline">{{ item.value }}</router-link>
+          <template v-else>{{ item.value }}</template>
+        </p>
       </div>
     </div>
 
@@ -79,7 +82,7 @@ const metadata = computed(() => {
     items.unshift({ label: 'Queue position', value: `#${task.value.queue_position}` })
   }
   const site = siteLabel(task.value)
-  if (site !== 'Server-level') items.unshift({ label: 'Site', value: site })
+  if (site !== 'Server-level') items.unshift({ label: 'Site', value: site, to: `/sites/${site}` })
   return items
 })
 

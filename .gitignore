@@ -23,6 +23,7 @@ build/
 .eggs/
 wheels/
 uv.lock
+yarn.lock
 
 # Virtual environments
 env/

@@ -22,6 +22,8 @@ def assert_read_only_query(query: str) -> None:
 
 
 class MariaDB(Database):
+    _identifier_quote = "`"
+
     def __init__(
         self,
         host: str,

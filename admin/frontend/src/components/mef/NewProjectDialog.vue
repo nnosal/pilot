@@ -64,9 +64,16 @@
           @keyup.enter="submit"
         />
 
-        <!-- Profile + DB engine -->
-        <div class="gap-3 grid grid-cols-1 sm:grid-cols-2">
+        <!-- Profile + fork + DB engine -->
+        <div class="gap-3 grid grid-cols-1 sm:grid-cols-3">
           <FormControl v-model="form.profile" label="Profile" type="select" :options="profileOptions" />
+          <FormControl
+            v-model="form.fork"
+            label="Fork"
+            type="select"
+            :options="forkOptions"
+            description="dokos = dodock + docli"
+          />
           <FormControl
             v-model="form.db_engine"
             label="DB engine"
@@ -76,7 +83,11 @@
         </div>
         <p v-if="!v16Compatible" class="bg-surface-amber-2 -mt-3 px-2.5 py-2 rounded text-ink-amber-8 text-p-sm flex items-center gap-1.5">
           <span class="size-3.5 lucide-triangle-alert shrink-0" />
-          sqlite engines need frappe v16+ or develop.
+          postgres and sqlite engines need frappe v16+ or develop.
+        </p>
+        <p v-if="postgresErpnextBlocked" class="bg-surface-amber-2 -mt-3 px-2.5 py-2 rounded text-ink-amber-8 text-p-sm flex items-center gap-1.5">
+          <span class="size-3.5 lucide-triangle-alert shrink-0" />
+          erpnext on postgres needs the develop profile — stable erpnext isn't pg-ready upstream.
         </p>
 
         <!-- Overlays -->
@@ -171,14 +182,18 @@ import { processLine } from '@/utils/ansi'
 const emit = defineEmits(['created', 'done'])
 const open = defineModel()
 
-// mef ships these profiles (config.<name>.toml under .config/mise/).
-// sqlite* engines are gated to v16+/develop by the backend; mirror that here
-// so the user gets immediate feedback before the round-trip.
+// mef ships these profiles (config.<name>.toml under .config/mise/). A fork is an
+// overlay on top of a profile, never a profile of its own - config.dokos.toml is
+// excluded from the profile list by tasks/new for that reason.
+// postgres and the sqlite engines are gated to v16+/develop by the backend; mirror
+// that here so the user gets immediate feedback before the round-trip.
 const PROFILE_OPTIONS = ['v12', 'v13', 'v14', 'v15', 'v16', 'develop']
-const SQLITE_ENGINES = ['sqlite', 'dolt_sqlite']
-const DB_ENGINE_OPTIONS = ['mariadb', 'dolt', 'sqlite', 'dolt_sqlite']
+const FORK_OPTIONS = ['frappe', 'dokos']
+const V16_ENGINES = ['postgres', 'sqlite', 'dolt_sqlite']
+const DB_ENGINE_OPTIONS = ['mariadb', 'postgres', 'dolt', 'sqlite', 'dolt_sqlite']
 
 const profileOptions = PROFILE_OPTIONS.map((value) => ({ label: value, value }))
+const forkOptions = FORK_OPTIONS.map((value) => ({ label: value, value }))
 const dbEngineOptions = DB_ENGINE_OPTIONS.map((value) => ({ label: value, value }))
 
 // Mirrors .config/mise/tasks/wizard's own headless fallbacks — shown here so
@@ -194,6 +209,7 @@ const WIZARD_DEFAULTS = {
 const form = reactive({
   directory: '',
   profile: 'v16',
+  fork: 'frappe',
   db_engine: 'mariadb',
   overlays: '',
   apps_preset: '',
@@ -221,8 +237,22 @@ watch(
 )
 
 const v16Compatible = computed(() => form.profile === 'v16' || form.profile === 'develop')
+
+// tasks/new step 6b refuses postgres + erpnext outside develop: stable erpnext carries
+// mariadb-only raw SQL. Only for the frappe fork - dokos has its own pg matrix.
+const postgresErpnextBlocked = computed(
+  () =>
+    form.db_engine === 'postgres' &&
+    form.fork === 'frappe' &&
+    appsIncludeErpnext.value &&
+    form.profile !== 'develop',
+)
+
 const canSubmit = computed(
-  () => form.directory.trim().length > 0 && (v16Compatible.value || !SQLITE_ENGINES.includes(form.db_engine)),
+  () =>
+    form.directory.trim().length > 0 &&
+    (v16Compatible.value || !V16_ENGINES.includes(form.db_engine)) &&
+    !postgresErpnextBlocked.value,
 )
 
 const STATUS_META = {
@@ -270,6 +300,7 @@ watch(open, (visible) => {
     Object.assign(form, {
       directory: '',
       profile: 'v16',
+      fork: 'frappe',
       db_engine: 'mariadb',
       overlays: '',
       apps_preset: '',
@@ -401,6 +432,7 @@ function buildPayload() {
   const payload = {
     directory: form.directory.trim(),
     profile: form.profile,
+    fork: form.fork,
     db_engine: form.db_engine,
   }
   const overlays = form.overlays.split(',').map((s) => s.trim()).filter(Boolean)

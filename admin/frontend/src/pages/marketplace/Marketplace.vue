@@ -60,7 +60,14 @@
         </div>
       </section>
 
-      <section v-if="frappeApps.length" :class="otherBenchApps.length ? 'mt-10' : 'mt-12'">
+      <section v-if="forkApps.length" :class="otherBenchApps.length ? 'mt-10' : 'mt-12'">
+        <p class="font-medium text-ink-gray-9 text-base">From {{ forkLabel }}</p>
+        <div class="gap-x-6 gap-y-4 grid grid-cols-1 md:grid-cols-2 mt-3">
+          <MarketplaceAppCard v-for="app in forkApps" :key="app.name" :app="app" @install="onInstall" />
+        </div>
+      </section>
+
+      <section v-if="frappeApps.length" :class="otherBenchApps.length || forkApps.length ? 'mt-10' : 'mt-12'">
         <p class="font-medium text-ink-gray-9 text-base">From Frappe</p>
         <div class="gap-x-6 gap-y-4 grid grid-cols-1 md:grid-cols-2 mt-3">
           <MarketplaceAppCard v-for="app in frappeApps" :key="app.name" :app="app" @install="onInstall" />
@@ -74,7 +81,7 @@
         </div>
       </section>
 
-      <p v-if="!frappeApps.length && !communityApps.length && !otherBenchApps.length"
+      <p v-if="!frappeApps.length && !forkApps.length && !communityApps.length && !otherBenchApps.length"
         class="mt-8 text-ink-gray-5 text-sm text-center">
         No apps found.
       </p>
@@ -121,6 +128,8 @@ const {
   filteredApps,
   benchVersionLabel,
   frappeApps,
+  forkApps,
+  forkLabel,
   communityApps,
   load,
   sites,

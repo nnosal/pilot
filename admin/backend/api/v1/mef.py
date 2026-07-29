@@ -50,8 +50,14 @@ _JOB_COMPLETED_TTL = 3600  # seconds
 # Reserved/skipped by the ``delete`` task; mirror its filter on the way out.
 _PROTECTED_PROJECTS = {"_demo", "_o"}
 
-_DB_ENGINES_V16 = {"sqlite", "dolt_sqlite"}
+# postgres is a native frappe backend but only sound from v16; sqlite/dolt_sqlite exist
+# only from v16. Mirrors the same gate in .config/mise/tasks/new (step 3).
+_DB_ENGINES_V16 = {"postgres", "sqlite", "dolt_sqlite"}
 _DB_ENGINES_ALL = {"mariadb", "dolt", *_DB_ENGINES_V16}
+
+# A fork is an overlay on a version profile, not a profile of its own: the task adds it
+# last in `.miserc.toml`'s `env` (see tasks/new step 1b).
+_FORKS = {"frappe", "dokos"}
 
 # Subset of .env keys the dialog surfaces (matches stats._mef_context).
 _MEF_ENV_KEYS = (
@@ -122,6 +128,81 @@ def _read_project_env(project_dir: Path) -> dict:
     except (OSError, ValueError):
         return {}
     return values
+
+
+def _host_project_env_keys() -> set[str]:
+    """Every key the hosting project's ``.env`` defines.
+
+    mise injects them into this daemon's own environment - it runs as
+    ``mise r pilot:admin`` inside that project. A job spawned for a DIFFERENT
+    project inherits them, and any key the target leaves unset keeps the host's
+    value: ``DB_ENGINE`` is commented out when it's the mariadb default, so a
+    mariadb project created from a postgres host was set up on postgres.
+    """
+    env_path = _bench_root().parent / ".env"
+    try:
+        lines = env_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return set()
+    keys = set()
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        keys.add(stripped.partition("=")[0].strip())
+    return keys
+
+
+def _host_injected_env_keys() -> set[str]:
+    """Every variable mise injects into this daemon from its hosting project.
+
+    Two sources: the project's ``.env`` and the ``[env]`` tables of its mise configs
+    (``config.<profile>.toml``, ``config.<fork>.toml``). Both are inherited by a job
+    spawned for a DIFFERENT project, and the version profiles read some of them back:
+
+        FRAPPE_REPO = "{{ get_env(name='FRAPPE_REPO', default='…/frappe/frappe') }}"
+
+    so a dokos host silently turned a plain frappe project into a dodock clone.
+
+    Read from the config files rather than ``mise env``: only the key names matter,
+    so there is nothing to render, and no subprocess to run per spawn.
+    """
+    project_dir = _bench_root().parent
+    mise_dir = _mef_root() / ".config" / "mise"
+    sources = [
+        mise_dir / "config.toml",
+        *(mise_dir / f"config.{profile}.toml" for profile in _host_mise_profiles(project_dir)),
+        project_dir / "mise.toml",
+    ]
+    keys = _host_project_env_keys()
+    for source in sources:
+        keys |= _toml_env_keys(source)
+    return keys
+
+
+def _host_mise_profiles(project_dir: Path) -> list[str]:
+    """The profiles the host project selects in ``.miserc.toml`` (``env = [...]``)."""
+    data = _read_toml(project_dir / ".miserc.toml")
+    selected = data.get("env")
+    if isinstance(selected, str):
+        return [selected]
+    return [name for name in selected or [] if isinstance(name, str)]
+
+
+def _toml_env_keys(path: Path) -> set[str]:
+    """Names declared in a mise config's ``[env]`` table, minus mise's own
+    directives (``_.file``, ``_.path``…)."""
+    env = _read_toml(path).get("env") or {}
+    return {key for key in env if isinstance(key, str) and not key.startswith("_")}
+
+
+def _read_toml(path: Path) -> dict:
+    import tomllib
+
+    try:
+        return tomllib.loads(path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return {}
 
 
 def _iter_mef_projects(mef_root: Path):
@@ -539,6 +620,10 @@ def _validate_new_request(data: dict, config: BenchConfig | None):
     if engine_error is not None:
         return engine_error
 
+    fork_error = _validate_fork(data, mef_root)
+    if fork_error is not None:
+        return fork_error
+
     directory_error = _validate_directory(data, mef_root)
     if directory_error is not None:
         return directory_error
@@ -566,6 +651,15 @@ def _validate_db_engine(data: dict, profile_file: Path):
             f"DB engine '{engine}' requires frappe v16+ or develop.",
             422,
         )
+    return None
+
+
+def _validate_fork(data: dict, mef_root: Path):
+    fork = (data.get("fork") or "frappe").strip()
+    if fork not in _FORKS:
+        return error_response("invalid_fork", f"Unknown fork '{fork}'.", 422)
+    if fork != "frappe" and not (mef_root / ".config" / "mise" / f"config.{fork}.toml").is_file():
+        return error_response("invalid_fork", f"Fork '{fork}' is not available in this mef checkout.", 422)
     return None
 
 
@@ -660,6 +754,7 @@ def _new_env_extras(data: dict) -> dict:
     """
     field_to_env = {
         "profile": "NEW_PROFILE",
+        "fork": "NEW_FORK",
         "directory": "NEW_DIR",
         "project_name": "NEW_PROJECT_NAME",
         "db_engine": "NEW_DB_ENGINE",
@@ -851,7 +946,14 @@ def _spawn_job(args: list[str], env_extras: dict, cwd: Path, label: str) -> str:
     # resolving its own — mise config becomes correct-looking (.miserc.toml is read)
     # but tool versions (python/node) and MISE_ENV-derived vars still resolve to the
     # daemon's host profile, not the target directory's.
-    base_env = {k: v for k, v in os.environ.items() if not k.startswith("MISE_")}
+    # Same reasoning for everything mise injected from the host project (see
+    # _host_injected_env_keys): mise recomputes them for the target project anyway, so
+    # dropping them is safe here and keeps a value the target leaves unset from
+    # silently defaulting to the host's.
+    leaked = _host_injected_env_keys()
+    base_env = {
+        k: v for k, v in os.environ.items() if not k.startswith("MISE_") and k not in leaked
+    }
     env = {**base_env, **env_extras, "NONINTERACTIVE": "1"}
 
     quoted = " ".join(shlex.quote(arg) for arg in args)
