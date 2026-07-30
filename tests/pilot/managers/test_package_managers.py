@@ -186,3 +186,47 @@ def test_install_node_raises_on_other_linux(monkeypatch) -> None:
     monkeypatch.setattr(module, "is_macos", lambda: False)
     with pytest.raises(BenchError, match=r"install\.sh"):
         manager._install_node()
+
+
+def _install_app_commands(monkeypatch, tmp_path: Path, app_files: dict[str, str]) -> list[list[str]]:
+    from types import SimpleNamespace
+
+    from pilot.config import AppConfig
+    from pilot.core.app import App
+    from pilot.managers import environment as module
+
+    app_path = tmp_path / "apps" / "myapp"
+    app_path.mkdir(parents=True)
+    for relpath, content in app_files.items():
+        app_path.joinpath(relpath).write_text(content)
+
+    bench = SimpleNamespace(apps_path=tmp_path / "apps", env_path=tmp_path / "env")
+    app = App(AppConfig(name="myapp", repo="https://example.com/myapp.git", branch="main"), bench)
+
+    commands: list[list[str]] = []
+    manager = module.PythonEnvManager(bench=bench)
+    monkeypatch.setattr(module.PythonEnvManager, "_ensure_uv", lambda self: "uv")
+    monkeypatch.setattr(module.PythonEnvManager, "_build_env", lambda self: {})
+    monkeypatch.setattr(module, "run_command", lambda argv, **kwargs: commands.append(argv))
+    manager.install_app(app)
+    return commands
+
+
+def test_install_app_uses_build_isolation_for_pyproject_app(monkeypatch, tmp_path: Path) -> None:
+    commands = _install_app_commands(
+        monkeypatch, tmp_path, {"pyproject.toml": '[project]\nname = "myapp"\n'}
+    )
+    assert len(commands) == 1
+    assert "--no-build-isolation" not in commands[0]
+
+
+def test_install_app_disables_build_isolation_for_legacy_setup_py_app(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """setup.py apps import their own package - and frappe - at build time,
+    which an isolated PEP 517 build environment cannot provide."""
+    commands = _install_app_commands(
+        monkeypatch, tmp_path, {"setup.py": "from setuptools import setup\n"}
+    )
+    assert commands[0][-2:] == ["setuptools", "wheel"]
+    assert "--no-build-isolation" in commands[-1]

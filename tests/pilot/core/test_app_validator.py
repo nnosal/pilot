@@ -256,6 +256,29 @@ def test_import_check_passes_for_legacy_setup_py_app(tmp_path: Path) -> None:
     ImportCheck().run(app)
 
 
+def test_import_check_passes_for_legacy_app_importing_frappe_at_build_time(tmp_path: Path) -> None:
+    """v12 apps read __version__ from a package whose __init__ imports frappe,
+    so their setup.py only builds when frappe is importable."""
+    _make_fake_frappe(tmp_path)
+    app = _make_app(
+        tmp_path,
+        "myapp",
+        None,
+        {
+            "setup.py": (
+                "from setuptools import setup, find_packages\n"
+                "from myapp import __version__\n\n"
+                "setup(name='myapp', version=__version__, packages=find_packages(),\n"
+                "      install_requires=['frappe'])\n"
+            ),
+            "requirements.txt": "frappe\n",
+            "myapp/__init__.py": "import frappe\n__version__ = '0.0.1'\n",
+            "myapp/hooks.py": "app_name = 'myapp'\n",
+        },
+    )
+    ImportCheck().run(app)
+
+
 def test_import_check_fails_on_genuinely_missing_import(tmp_path: Path) -> None:
     _make_fake_frappe(tmp_path)
     app = _make_app(

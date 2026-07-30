@@ -50,7 +50,14 @@ class TmpEnv:
         # Installed together so imports across the app and its bench-installed
         # required apps (e.g. erpnext) resolve in one shot.
         try:
-            self._pip_install([*dependency_paths, app.path])
+            if app.has_pyproject:
+                self._pip_install([*dependency_paths, app.path])
+                return
+            # A setup.py app imports its own package (which imports frappe) to read
+            # __version__, so its build needs this env - and the setuptools backend
+            # in it - rather than an isolated PEP 517 environment.
+            self._pip_install(["setuptools", "wheel"])
+            self._pip_install([*dependency_paths, app.path], build_isolation=False)
         except CommandError as exc:
             raise AppValidationError(f"'{app.config.name}' failed to install:\n{exc.message}") from exc
 
@@ -79,9 +86,12 @@ class TmpEnv:
             "print(json.dumps(errors))\n"
         )
 
-    def _pip_install(self, paths: list[Path]) -> None:
+    def _pip_install(self, targets: Iterable[str | Path], *, build_isolation: bool = True) -> None:
         python = str(self.path / "bin" / "python")
-        run_command([self._uv(), "pip", "install", "--python", python, *map(str, paths)])
+        argv = [self._uv(), "pip", "install", "--python", python]
+        if not build_isolation:
+            argv.append("--no-build-isolation")
+        run_command([*argv, *map(str, targets)])
 
     def delete(self) -> None:
         if self._dir is not None:

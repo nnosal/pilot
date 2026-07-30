@@ -169,8 +169,16 @@ class PythonEnvManager:
     def install_app(self, app: "App") -> None:
         uv = self._ensure_uv()
         python = str(self.bench.env_path / "bin" / "python")
+        install = [uv, "pip", "install", "--python", python]
+        legacy_args = []
+        if not app.has_pyproject:
+            # A setup.py app imports its own package (which imports frappe) to read
+            # __version__, so its build needs the bench env - and the setuptools
+            # backend in it - rather than an isolated PEP 517 environment.
+            run_command([*install, "setuptools", "wheel"], stream_output=True, env=self._build_env())
+            legacy_args = ["--no-build-isolation"]
         run_command(
-            [uv, "pip", "install", "--python", python, "-e", str(app.path)],
+            [*install, *legacy_args, "-e", str(app.path)],
             stream_output=True,
             env=self._build_env(),
         )
