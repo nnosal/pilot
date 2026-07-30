@@ -14,14 +14,14 @@ class RepoStructureCheck:
     """Verifies a cloned app has the files pilot expects before installing it."""
 
     def run(self, app: "App") -> None:
-        if not (app.path / "pyproject.toml").exists():
-            raise AppValidationError(f"'{app.config.name}' has no pyproject.toml.")
-
-        try:
-            with open((app.path / "pyproject.toml"), "rb") as f:
-                tomllib.load(f)
-        except tomllib.TOMLDecodeError as exc:
-            raise AppValidationError(f"'{app.config.name}' has an invalid pyproject.toml: {exc}") from exc
+        if app.has_pyproject:
+            try:
+                with open(app.pyproject_path, "rb") as f:
+                    tomllib.load(f)
+            except tomllib.TOMLDecodeError as exc:
+                raise AppValidationError(f"'{app.config.name}' has an invalid pyproject.toml: {exc}") from exc
+        elif not (app.path / "setup.py").exists():
+            raise AppValidationError(f"'{app.config.name}' has no pyproject.toml or setup.py.")
 
         path = module_path(app)
         if not path.is_dir():

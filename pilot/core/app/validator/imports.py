@@ -35,7 +35,7 @@ class ImportCheck:
         from pilot.core.app.validator.dependency_declarations import DependencyDeclarationsCheck
         from pilot.exceptions import BenchError
 
-        required = DependencyDeclarationsCheck()._get_pyproject_required_apps(app)
+        required = DependencyDeclarationsCheck().get_required_apps(app)
         paths = []
         for name in required:
             try:

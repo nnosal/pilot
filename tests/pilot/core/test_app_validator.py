@@ -14,19 +14,26 @@ from pilot.core.app.validator.dependency_declarations import DependencyDeclarati
 from pilot.core.app.validator.imports import ImportCheck
 from pilot.core.app.validator.repo_structure import RepoStructureCheck
 from pilot.core.app.validator.syntax import SyntaxCheck
-from pilot.exceptions import AppValidationError
+from pilot.exceptions import AppValidationError, BenchError
 
 
 @dataclass
 class _FakeBench:
     apps_path: Path
     env_path: Path
+    python: Path | None = None  # None lets TmpEnv pick the interpreter running the tests
+
+    def app(self, name: str) -> App:
+        if not (self.apps_path / name).is_dir():
+            raise BenchError(f"App '{name}' not found in bench.")
+        return App(AppConfig(name=name, repo=f"https://example.com/{name}.git", branch="main"), self)
 
 
-def _make_app(bench_root: Path, name: str, pyproject: str, files: dict[str, str]) -> App:
+def _make_app(bench_root: Path, name: str, pyproject: str | None, files: dict[str, str]) -> App:
     app_path = bench_root / "apps" / name
     app_path.mkdir(parents=True)
-    (app_path / "pyproject.toml").write_text(pyproject)
+    if pyproject is not None:
+        (app_path / "pyproject.toml").write_text(pyproject)
     for relpath, content in files.items():
         full = app_path / relpath
         full.parent.mkdir(parents=True, exist_ok=True)
@@ -41,6 +48,11 @@ def _static_checks() -> list:
 
 
 _SETUPTOOLS_BUILD = '[build-system]\nrequires = ["setuptools>=61"]\nbuild-backend = "setuptools.build_meta"\n'
+
+_LEGACY_SETUP_PY = (
+    "from setuptools import setup, find_packages\n\n"
+    "setup(name='myapp', version='0.0.1', packages=find_packages(), install_requires=['frappe'])\n"
+)
 
 
 def _make_fake_frappe(bench_root: Path) -> None:
@@ -73,13 +85,34 @@ def test_validate_includes_import_check_by_default(tmp_path: Path) -> None:
     assert any(isinstance(check, ImportCheck) for check in Validator(app).checks)
 
 
-def test_validate_repo_structure_fails_without_pyproject(tmp_path: Path) -> None:
+def test_validate_repo_structure_fails_without_pyproject_or_setup_py(tmp_path: Path) -> None:
     app_path = tmp_path / "apps" / "myapp"
     app_path.mkdir(parents=True)
     bench = _FakeBench(apps_path=tmp_path / "apps", env_path=tmp_path / "env")
     app = App(AppConfig(name="myapp", repo="https://example.com/myapp.git", branch="main"), bench)
-    with pytest.raises(AppValidationError, match=r"pyproject\.toml"):
+    with pytest.raises(AppValidationError, match=r"pyproject\.toml or setup\.py"):
         Validator(app).validate()
+
+
+def test_validate_passes_for_legacy_setup_py_app(tmp_path: Path) -> None:
+    """v12/v13-era apps ship setup.py + requirements.txt and no pyproject.toml."""
+    app = _make_app(
+        tmp_path,
+        "myapp",
+        None,
+        {
+            "setup.py": _LEGACY_SETUP_PY,
+            "requirements.txt": "frappe\n",
+            "myapp/hooks.py": "app_name = 'myapp'\n",
+        },
+    )
+    Validator(app, checks=_static_checks()).validate()
+
+
+def test_validate_legacy_app_still_requires_hooks(tmp_path: Path) -> None:
+    app = _make_app(tmp_path, "myapp", None, {"setup.py": _LEGACY_SETUP_PY, "myapp/__init__.py": ""})
+    with pytest.raises(AppValidationError, match=r"hooks\.py"):
+        Validator(app, checks=_static_checks()).validate()
 
 
 def test_validate_repo_structure_fails_without_hooks(tmp_path: Path) -> None:
@@ -161,6 +194,37 @@ def test_dependency_declarations_excludes_frappe_from_hooks_comparison(tmp_path:
     Validator(app, checks=_static_checks()).validate()
 
 
+def test_dependency_declarations_skips_legacy_app_without_pyproject(tmp_path: Path) -> None:
+    """A setup.py app has no [tool.bench.frappe-dependencies] to cross-check against."""
+    app = _make_app(
+        tmp_path,
+        "myapp",
+        None,
+        {"setup.py": _LEGACY_SETUP_PY, "myapp/hooks.py": 'required_apps = ["frappe/erpnext"]\n'},
+    )
+    DependencyDeclarationsCheck().run(app)
+
+
+def test_required_apps_of_legacy_app_come_from_hooks(tmp_path: Path) -> None:
+    app = _make_app(
+        tmp_path,
+        "myapp",
+        None,
+        {"setup.py": _LEGACY_SETUP_PY, "myapp/hooks.py": 'required_apps = ["frappe/erpnext"]\n'},
+    )
+    assert DependencyDeclarationsCheck().get_required_apps(app) == ["frappe", "erpnext"]
+
+
+def test_required_apps_of_modern_app_come_from_pyproject(tmp_path: Path) -> None:
+    app = _make_app(
+        tmp_path,
+        "myapp",
+        '[project]\nname = "myapp"\n\n[tool.bench.frappe-dependencies]\nfrappe = ">=15"\nerpnext = ">=15"\n',
+        {"myapp/hooks.py": "app_name = 'myapp'\n"},
+    )
+    assert DependencyDeclarationsCheck().get_required_apps(app) == ["frappe", "erpnext"]
+
+
 def test_import_check_passes_when_all_imports_resolve(tmp_path: Path) -> None:
     _make_fake_frappe(tmp_path)
     app = _make_app(
@@ -168,6 +232,23 @@ def test_import_check_passes_when_all_imports_resolve(tmp_path: Path) -> None:
         "myapp",
         f'[project]\nname = "myapp"\nversion = "0.0.1"\ndependencies = ["frappe"]\n\n{_SETUPTOOLS_BUILD}',
         {
+            "myapp/hooks.py": "app_name = 'myapp'\n",
+            "myapp/utils.py": "import frappe\nfrom myapp.hooks import app_name\n",
+        },
+    )
+    ImportCheck().run(app)
+
+
+def test_import_check_passes_for_legacy_setup_py_app(tmp_path: Path) -> None:
+    _make_fake_frappe(tmp_path)
+    app = _make_app(
+        tmp_path,
+        "myapp",
+        None,
+        {
+            "setup.py": _LEGACY_SETUP_PY,
+            "requirements.txt": "frappe\n",
+            "myapp/__init__.py": "__version__ = '0.0.1'\n",  # find_packages() needs it
             "myapp/hooks.py": "app_name = 'myapp'\n",
             "myapp/utils.py": "import frappe\nfrom myapp.hooks import app_name\n",
         },

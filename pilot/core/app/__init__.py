@@ -119,9 +119,18 @@ class App:
         self._repository.checkout_pinned_commit(sha)
 
     @property
+    def pyproject_path(self) -> Path:
+        return self.path / "pyproject.toml"
+
+    @property
+    def has_pyproject(self) -> bool:
+        """False for v12/v13-era apps, which declare themselves in setup.py."""
+        return self.pyproject_path.exists()
+
+    @property
     def module_name(self) -> str:
         """Return the importable package name, preferring pyproject.toml."""
-        pyproject = self.path / "pyproject.toml"
+        pyproject = self.pyproject_path
         if pyproject.exists():
             import tomllib
 

@@ -15,6 +15,9 @@ class DependencyDeclarationsCheck:
     """Ensure hooks and pyproject.toml have sane dependency requirements."""
 
     def run(self, app: "App") -> None:
+        if not app.has_pyproject:
+            return  # legacy setup.py app: no declaration file to cross-check hooks.py against
+
         required_apps_from_hooks = self.get_hooks_required_apps(app)
         declared_required_apps_in_pyproject = self._get_pyproject_required_apps(app)
 
@@ -33,6 +36,13 @@ class DependencyDeclarationsCheck:
                 f"'{app.config.name}' requires {sorted(missing)} in hooks.py but they're "
                 "missing from pyproject.toml's [tool.bench.frappe-dependencies]."
             )
+
+    def get_required_apps(self, app: "App") -> list[str]:
+        """Return the frappe apps this app needs, from pyproject.toml or, for
+        legacy setup.py apps, from hooks.py's required_apps."""
+        if app.has_pyproject:
+            return self._get_pyproject_required_apps(app)
+        return ["frappe", *self.get_hooks_required_apps(app)]
 
     def get_hooks_required_apps(self, app: "App") -> list[str]:
         """Parse hooks.py (guaranteed present by RepoStructureCheck) for required_apps."""

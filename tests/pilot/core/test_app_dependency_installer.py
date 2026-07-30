@@ -148,3 +148,22 @@ def test_install_raises_when_app_not_in_marketplace_but_requires_missing_apps(
         pytest.raises(BenchError, match="isn't in the marketplace registry"),
     ):
         AppDependencyInstaller(bench, app).install()
+
+
+def test_install_reads_required_apps_from_hooks_for_legacy_setup_py_app(tmp_path: Path) -> None:
+    """A v12-era app has no pyproject.toml - hooks.py is the only declaration."""
+    bench = make_bench(tmp_path)
+    bench.create_directories()
+    app_dir = bench.apps_path / "legacy_app"
+    (app_dir / "legacy_app").mkdir(parents=True)
+    app_dir.joinpath("setup.py").write_text("from setuptools import setup\nsetup(name='legacy_app')\n")
+    app_dir.joinpath("legacy_app", "hooks.py").write_text('required_apps = ["frappe/erpnext"]\n')
+    app = make_app(bench, "legacy_app")
+
+    with (
+        patch.object(Marketplace, "read_all_apps", return_value=[]),
+        patch.object(Marketplace, "get_current_frappe_version", return_value="16.0.0"),
+        patch.object(Marketplace, "_read_apps_json", return_value="[]"),
+        pytest.raises(BenchError, match="erpnext"),
+    ):
+        AppDependencyInstaller(bench, app).install()
